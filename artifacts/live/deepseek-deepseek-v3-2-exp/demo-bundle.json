@@ -1,0 +1,234 @@
+{
+  "aggregate_metrics": {
+    "average_iterations": 3.33,
+    "failed_tools": 2,
+    "passed_tools": 4,
+    "success_rate": 0.667,
+    "tool_count": 6,
+    "total_iterations": 20
+  },
+  "casefiles": [
+    {
+      "accepted_attempt": {
+        "code": "def read_local_context(base_dir: str, requested_path: str, file_map: dict[str, str]) -> str:\n    \"\"\"\n    Normalize a user-requested relative path, reject traversal or non-.txt access,\n    and read the content from the provided in-memory file map.\n    \n    Args:\n        base_dir: The safe base directory path (must end with '/' for consistency)\n        requested_path: User-requested relative path\n        file_map: Dictionary mapping normalized file paths to their content\n        \n    Returns:\n        The content of the requested file as a string\n        \n    Raises:\n        ValueError: If the path is invalid, outside base_dir, or not a .txt file\n        KeyError: If the file is not found in file_map (simulating file not found)\n    \"\"\"\n    \n    # Helper function to normalize paths\n    def normalize_path(base: str, path: str) -> str:\n        \"\"\"Normalize a path relative to base directory.\"\"\"\n        # Ensure base_dir ends with '/'\n        if not base.endswith('/'):\n            base = base + '/'\n        \n        # Reject absolute paths\n        if path.startswith('/'):\n            raise ValueError(\"Absolute paths are not allowed\")\n        \n        # Handle empty path\n        if not path:\n            raise ValueError(\"Empty path is not allowed\")\n        \n        # Split the path into components\n        components = []\n        for component in path.split('/'):\n            if component == '' or component == '.':\n                # Skip empty components and current directory references\n                continue\n            elif component == '..':\n                # Try to go up one directory\n                if components:\n                    components.pop()\n                else:\n                    # Attempted to go above base directory\n                    raise ValueError(\"Path traversal outside base directory\")\n            else:\n                components.append(component)\n        \n        # Join components back together\n        normalized = '/'.join(components)\n        \n        # Check if the normalized path is within base directory\n        # Since we already prevented '..' from escaping, and we're building\n        # from scratch, the path should be safe\n        full_path = base + normalized\n        \n        # Additional safety check: ensure the path starts with base\n        if not full_path.startswith(base):\n            raise ValueError(\"Path is outside the base directory\")\n            \n        return full_path\n    \n    # Normalize the requested path\n    try:\n        normalized_path = normalize_path(base_dir, requested_path)\n    except ValueError as e:\n        raise ValueError(f\"Invalid path: {e}\")\n    \n    # Check if the file is a .txt file\n    if not normalized_path.endswith('.txt'):\n        raise ValueError(\"Only .txt files are allowed\")\n    \n    # Look up the file in the file map\n    if normalized_path not in file_map:\n        raise KeyError(f\"File not found: {normalized_path}\")\n    \n    # Return the content\n    return file_map[normalized_path]",
+        "metrics": {
+          "passed_cases": 7,
+          "total_cases": 7
+        },
+        "summary": "reader enforces normalized safe-path and extension invariants on bounded adversarial cases"
+      },
+      "constraints": [
+        "Reject absolute paths and any normalized path outside the base directory.",
+        "Reject files whose normalized path does not end in .txt.",
+        "Do not touch the real filesystem; use only the provided file_map."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "read_local_context",
+      "id": "local_context_reader",
+      "iterations": 4,
+      "name": "Local Context Reader",
+      "primary_invariant": "A request may only read `.txt` files that remain inside the declared safe base directory after normalization.",
+      "signature": "read_local_context(base_dir: str, requested_path: str, file_map: dict[str, str]) -> str",
+      "status": "verified",
+      "task": "Normalize a user-requested relative path, reject traversal or non-.txt access, and read the content from the provided in-memory file map.",
+      "thesis": "The reader must treat path normalization as a safety boundary rather than a convenience feature.",
+      "verification_lane": "AST guard plus bounded adversarial path coverage over normalized in-memory file access."
+    },
+    {
+      "accepted_attempt": {
+        "code": null,
+        "metrics": {},
+        "summary": "valid SELECT query crashed the candidate"
+      },
+      "constraints": [
+        "Support only SELECT <columns> FROM rows [WHERE <column> <op> <int>] [LIMIT <int>].",
+        "Reject DELETE, UPDATE, INSERT, DROP, ALTER, CREATE, PRAGMA, semicolons, and unknown columns.",
+        "Treat the input `rows` as the only table."
+      ],
+      "evidence_level": "bounded-execution",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "run_bounded_sql",
+      "id": "bounded_sql_querier",
+      "iterations": 4,
+      "name": "Bounded SQL Querier",
+      "primary_invariant": "Only a safe SELECT grammar is allowed; mutating SQL or multi-statement queries must be rejected.",
+      "signature": "run_bounded_sql(query: str, rows: list[dict[str, int]]) -> list[dict[str, int]]",
+      "status": "failed",
+      "task": "Execute a tiny SELECT-only SQL fragment over an in-memory table of rows.",
+      "thesis": "A tiny SELECT-only fragment is easier to verify and still useful for agent retrieval.",
+      "verification_lane": "AST guard plus oracle-matched execution over safe and unsafe query fixtures."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def safe_api_call(url: str, method: str, allowlist: list[str], responses: dict[str, str]) -> str:\n    \"\"\"\n    Validate an outbound API request against a strict allowlist and return a mocked response body.\n    \n    Args:\n        url: The URL to call\n        method: HTTP method (only GET allowed)\n        allowlist: List of allowlisted hostnames\n        responses: Dictionary mapping '<METHOD> <URL>' to response body\n    \n    Returns:\n        Mocked response body from responses dictionary\n        \n    Raises:\n        ValueError: If validation fails\n    \"\"\"\n    \n    # Helper function to validate hostname\n    def is_valid_hostname(hostname: str) -> bool:\n        \"\"\"Check if hostname is valid (not IP address, not localhost, not private).\"\"\"\n        if not hostname:\n            return False\n            \n        # Check for localhost\n        if hostname.lower() == 'localhost':\n            return False\n            \n        # Check if it's a bare IP address (IPv4)\n        parts = hostname.split('.')\n        if len(parts) == 4:\n            try:\n                # Check if all parts are numbers\n                all_numeric = all(part.isdigit() for part in parts)\n                if all_numeric:\n                    # Check if it's a private IP\n                    first_octet = int(parts[0])\n                    second_octet = int(parts[1])\n                    \n                    # Private IP ranges:\n                    # 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16\n                    if first_octet == 10:\n                        return False\n                    if first_octet == 172 and 16 <= second_octet <= 31:\n                        return False\n                    if first_octet == 192 and second_octet == 168:\n                        return False\n                        \n                    # Bare IP addresses are not allowed\n                    return False\n            except ValueError:\n                pass\n                \n        return True\n    \n    # 1. Validate method (case-insensitive)\n    if method.upper() != 'GET':\n        raise ValueError(f\"Only GET method is allowed, got: {method}\")\n    \n    # 2. Validate URL scheme\n    if not url.startswith('https://'):\n        raise ValueError(\"Only HTTPS URLs are allowed\")\n    \n    # 3. Extract hostname from URL\n    # Remove 'https://' prefix\n    url_without_scheme = url[8:]\n    \n    # Find the first '/' to separate hostname from path\n    slash_pos = url_without_scheme.find('/')\n    if slash_pos == -1:\n        hostname = url_without_scheme\n        path = '/'\n    else:\n        hostname = url_without_scheme[:slash_pos]\n        path = url_without_scheme[slash_pos:]\n    \n    # 4. Check for port in hostname\n    colon_pos = hostname.find(':')\n    if colon_pos != -1:\n        hostname = hostname[:colon_pos]\n    \n    # 5. Validate hostname\n    if not is_valid_hostname(hostname):\n        raise ValueError(f\"Invalid hostname: {hostname}\")\n    \n    # 6. Check against allowlist\n    if hostname not in allowlist:\n        raise ValueError(f\"Hostname not in allowlist: {hostname}\")\n    \n    # 7. Look up response\n    key = f\"{method.upper()} {url}\"\n    if key not in responses:\n        raise ValueError(f\"No mock response found for: {key}\")\n    \n    return responses[key]",
+        "metrics": {
+          "passed_cases": 8,
+          "total_cases": 8
+        },
+        "summary": "API caller enforces scheme, host, and method restrictions on bounded adversarial cases"
+      },
+      "constraints": [
+        "Reject localhost, private IPs, bare IP hosts, and non-HTTPS schemes.",
+        "Only the GET method is allowed.",
+        "Look up the final response in the provided responses map using the key '<METHOD> <URL>'."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "safe_api_call",
+      "id": "safe_api_caller",
+      "iterations": 3,
+      "name": "Safe API Caller",
+      "primary_invariant": "Only HTTPS GET requests to explicitly allowlisted public hosts are permitted.",
+      "signature": "safe_api_call(url: str, method: str, allowlist: list[str], responses: dict[str, str]) -> str",
+      "status": "verified",
+      "task": "Validate an outbound API request against a strict allowlist and return a mocked response body.",
+      "thesis": "The network boundary belongs in the tool contract, not in the model's intentions.",
+      "verification_lane": "URL policy oracle covering scheme, host, IP, and method restrictions."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def append_only_log(existing: str, new_entry: str, max_bytes: int = 4096) -> str:\n    \"\"\"\n    Append a new log entry without mutating existing bytes and enforce a hard output-size cap.\n    \n    Args:\n        existing: The existing log content that must remain as a prefix\n        new_entry: The new log entry to append\n        max_bytes: Maximum allowed byte length of the output (default: 4096)\n    \n    Returns:\n        The new log content if it satisfies all constraints\n        \n    Raises:\n        ValueError: If the operation would violate any constraint\n    \"\"\"\n    \n    # Helper function to check if a string contains null bytes\n    def contains_null_byte(s: str) -> bool:\n        return '\\x00' in s\n    \n    # Check for null bytes in the new entry\n    if contains_null_byte(new_entry):\n        raise ValueError(\"New entry contains null bytes\")\n    \n    # Check if existing log ends with newline\n    separator = \"\"\n    if existing and not existing.endswith('\\n'):\n        separator = \"\\n\"\n    \n    # Construct the potential new log\n    potential_log = existing + separator + new_entry\n    \n    # Check byte length\n    byte_length = len(potential_log.encode('utf-8'))\n    if byte_length > max_bytes:\n        raise ValueError(f\"Output would exceed max_bytes limit: {byte_length} > {max_bytes}\")\n    \n    return potential_log",
+        "metrics": {
+          "passed_cases": 5,
+          "total_cases": 5
+        },
+        "summary": "logger preserves prefix monotonicity and bounded growth on bounded adversarial cases"
+      },
+      "constraints": [
+        "Preserve the full previous log exactly as a prefix.",
+        "If the existing log is non-empty and does not end with a newline, insert one before the new entry.",
+        "Reject outputs whose byte length would exceed max_bytes."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Oversized writes and NUL bytes should be rejected.",
+          "payload": {
+            "existing": "",
+            "max_bytes": 64,
+            "new_entry": "abc\u0000def"
+          },
+          "title": "invalid_append_accepted"
+        },
+        "summary": "invalid append request was accepted"
+      },
+      "function_name": "append_only_log",
+      "id": "append_only_logger",
+      "iterations": 2,
+      "name": "Append-Only Logger",
+      "primary_invariant": "The previous log must remain a prefix of the new log; size must never exceed the configured bound.",
+      "signature": "append_only_log(existing: str, new_entry: str, max_bytes: int = 4096) -> str",
+      "status": "verified",
+      "task": "Append a new log entry without mutating existing bytes and enforce a hard output-size cap.",
+      "thesis": "Scratchpad memory is safest when writes become monotonic state transitions.",
+      "verification_lane": "Prefix-preservation checks and bounded byte-budget enforcement."
+    },
+    {
+      "accepted_attempt": {
+        "code": null,
+        "metrics": {},
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "constraints": [
+        "Replace matches with stable placeholders rather than deleting all surrounding context.",
+        "Handle multiple PII categories in one string.",
+        "Do not introduce new digits that recreate a banned pattern."
+      ],
+      "evidence_level": "ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "mask_pii",
+      "id": "pii_masker",
+      "iterations": 4,
+      "name": "PII Masker",
+      "primary_invariant": "Masked output must not contain emails, US phone numbers, SSNs, or 16-digit card numbers recognized by the repository regex suite.",
+      "signature": "mask_pii(text: str) -> str",
+      "status": "failed",
+      "task": "Redact common PII patterns before text is sent to an LLM.",
+      "thesis": "Sanitization should fail closed on known high-risk PII classes before context leaves the host.",
+      "verification_lane": "Regex-backed fixture suite with stable placeholder expectations."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def bounded_evaluate(expression: str, variables: dict[str, int], max_nodes: int = 32) -> int:\n    \"\"\"\n    Evaluate a tiny arithmetic expression with explicit resource bounds.\n    \n    Args:\n        expression: String containing the arithmetic expression\n        variables: Dictionary mapping variable names to integer values\n        max_nodes: Maximum number of AST nodes allowed (default: 32)\n    \n    Returns:\n        Integer result of the evaluation\n    \n    Raises:\n        ValueError: If expression contains unsupported syntax, unknown variables,\n                   division by zero, or exceeds max_nodes\n    \"\"\"\n    \n    # Helper function to count nodes in AST\n    def count_nodes(node):\n        \"\"\"Count nodes in AST recursively.\"\"\"\n        if isinstance(node, (list, tuple)):\n            # Node with children\n            count = 1\n            for child in node:\n                if child is not None:\n                    count += count_nodes(child)\n            return count\n        else:\n            # Leaf node\n            return 1\n    \n    # Simple recursive parser and evaluator\n    def parse_and_evaluate(tokens, start=0):\n        \"\"\"Parse and evaluate expression from tokens.\"\"\"\n        # Parse addition/subtraction\n        node, value, pos = parse_term(tokens, start)\n        \n        while pos < len(tokens) and tokens[pos] in ('+', '-'):\n            op = tokens[pos]\n            right_node, right_value, pos = parse_term(tokens, pos + 1)\n            \n            # Create AST node\n            node = (op, node, right_node)\n            value = value + right_value if op == '+' else value - right_value\n        \n        return node, value, pos\n    \n    def parse_term(tokens, start):\n        \"\"\"Parse multiplication/division.\"\"\"\n        node, value, pos = parse_factor(tokens, start)\n        \n        while pos < len(tokens) and tokens[pos] in ('*', '//'):\n            op = tokens[pos]\n            right_node, right_value, pos = parse_factor(tokens, pos + 1)\n            \n            if op == '//':\n                if right_value == 0:\n                    raise ValueError(\"division by zero\")\n                # Create AST node\n                node = (op, node, right_node)\n                value = value // right_value\n            else:\n                # Create AST node\n                node = (op, node, right_node)\n                value = value * right_value\n        \n        return node, value, pos\n    \n    def parse_factor(tokens, start):\n        \"\"\"Parse numbers, variables, unary minus, and parentheses.\"\"\"\n        if start >= len(tokens):\n            raise ValueError(\"unexpected end of expression\")\n        \n        token = tokens[start]\n        \n        if token == '(':\n            node, value, pos = parse_and_evaluate(tokens, start + 1)\n            if pos >= len(tokens) or tokens[pos] != ')':\n                raise ValueError(\"missing closing parenthesis\")\n            return node, value, pos + 1\n        \n        elif token == '-':\n            # Unary minus\n            node, value, pos = parse_factor(tokens, start + 1)\n            node = ('neg', node)\n            return node, -value, pos\n        \n        elif token.isdigit() or (token[0] == '-' and token[1:].isdigit()):\n            # Integer literal\n            node = ('num', int(token))\n            return node, int(token), start + 1\n        \n        elif token.isidentifier():\n            # Variable\n            if token not in variables:\n                raise ValueError(f\"unknown variable '{token}'\")\n            node = ('var', token)\n            return node, variables[token], start + 1\n        \n        else:\n            raise ValueError(f\"unexpected token '{token}'\")\n    \n    # Tokenize the expression\n    def tokenize(expr):\n        \"\"\"Convert expression string to tokens.\"\"\"\n        tokens = []\n        i = 0\n        n = len(expr)\n        \n        while i < n:\n            ch = expr[i]\n            \n            if ch.isspace():\n                i += 1\n                continue\n            \n            if ch.isdigit():\n                # Parse integer (including negative numbers at start)\n                j = i\n                while j < n and (expr[j].isdigit() or (j == i and expr[j] == '-' and j + 1 < n and expr[j + 1].isdigit())):\n                    j += 1\n                tokens.append(expr[i:j])\n                i = j\n            elif ch.isalpha() or ch == '_':\n                # Parse identifier\n                j = i\n                while j < n and (expr[j].isalnum() or expr[j] == '_'):\n                    j += 1\n                tokens.append(expr[i:j])\n                i = j\n            elif ch in '()+-*//':\n                # Operators and parentheses\n                # Check for integer division operator\n                if ch == '/' and i + 1 < n and expr[i + 1] == '/':\n                    tokens.append('//')\n                    i += 2\n                else:\n                    tokens.append(ch)\n                    i += 1\n            else:\n                # Invalid character\n                raise ValueError(f\"invalid character '{ch}'\")\n        \n        return tokens\n    \n    try:\n        # Tokenize the expression\n        tokens = tokenize(expression)\n        \n        # Check for empty expression\n        if not tokens:\n            raise ValueError(\"empty expression\")\n        \n        # Parse and evaluate\n        ast, result, pos = parse_and_evaluate(tokens, 0)\n        \n        # Check if we parsed the entire expression\n        if pos != len(tokens):\n            raise ValueError(\"invalid expression syntax\")\n        \n        # Count nodes and check bounds\n        node_count = count_nodes(ast)\n        if node_count > max_nodes:\n            raise ValueError(f\"expression exceeds maximum node count of {max_nodes}\")\n        \n        return result\n        \n    except ValueError:\n        # Re-raise ValueErrors\n        raise\n    except Exception as e:\n        # Convert any other exceptions to ValueError\n        raise ValueError(f\"evaluation error: {str(e)}\")",
+        "metrics": {
+          "passed_cases": 12,
+          "total_cases": 12
+        },
+        "summary": "evaluator matches the bounded arithmetic oracle and rejects unsupported syntax"
+      },
+      "constraints": [
+        "Support integers, variables, parentheses, unary minus, +, -, *, and //.",
+        "Reject function calls, attributes, exponentiation, unknown variables, and expressions with more than max_nodes AST nodes.",
+        "Return the same result as the reference interpreter on bounded inputs."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "bounded_evaluate",
+      "id": "compute_bounded_evaluator",
+      "iterations": 3,
+      "name": "Compute-Bounded Evaluator",
+      "primary_invariant": "Only a bounded whitelist of arithmetic AST nodes is allowed, and evaluation must reject unsupported or oversized expressions.",
+      "signature": "bounded_evaluate(expression: str, variables: dict[str, int], max_nodes: int = 32) -> int",
+      "status": "verified",
+      "task": "Evaluate a tiny arithmetic expression language with explicit resource bounds.",
+      "thesis": "If the evaluator language is tiny, the verifier can exhaustively compare semantics on bounded cases.",
+      "verification_lane": "AST whitelist plus bounded arithmetic equivalence against a reference interpreter."
+    }
+  ],
+  "provider": "openai-compatible",
+  "tagline": "CEGIS for synthesizing safe agent tools under explicit environment invariants.",
+  "timeline": [
+    "Specify a micro-scoped tool and its primary invariant.",
+    "Generate a candidate implementation through the synthesis interface.",
+    "Run AST guards and bounded executable verifiers.",
+    "Feed the counterexample back into the next generation attempt.",
+    "Accept only the first candidate that satisfies the bounded verifier suite."
+  ],
+  "title": "VeriTool"
+}

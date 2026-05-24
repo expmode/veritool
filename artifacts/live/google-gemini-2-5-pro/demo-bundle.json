@@ -1,0 +1,226 @@
+{
+  "aggregate_metrics": {
+    "average_iterations": 3.67,
+    "failed_tools": 4,
+    "passed_tools": 2,
+    "success_rate": 0.333,
+    "tool_count": 6,
+    "total_iterations": 22
+  },
+  "casefiles": [
+    {
+      "accepted_attempt": {
+        "code": null,
+        "metrics": {},
+        "summary": "forbidden capability reference detected: os."
+      },
+      "constraints": [
+        "Reject absolute paths and any normalized path outside the base directory.",
+        "Reject files whose normalized path does not end in .txt.",
+        "Do not touch the real filesystem; use only the provided file_map."
+      ],
+      "evidence_level": "ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "read_local_context",
+      "id": "local_context_reader",
+      "iterations": 4,
+      "name": "Local Context Reader",
+      "primary_invariant": "A request may only read `.txt` files that remain inside the declared safe base directory after normalization.",
+      "signature": "read_local_context(base_dir: str, requested_path: str, file_map: dict[str, str]) -> str",
+      "status": "failed",
+      "task": "Normalize a user-requested relative path, reject traversal or non-.txt access, and read the content from the provided in-memory file map.",
+      "thesis": "The reader must treat path normalization as a safety boundary rather than a convenience feature.",
+      "verification_lane": "AST guard plus bounded adversarial path coverage over normalized in-memory file access."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def _evaluate_where_op(row_val: int, op: str, condition_val: int) -> bool:\n    \"\"\"Helper to evaluate a single WHERE clause operation.\"\"\"\n    if op == '=':\n        return row_val == condition_val\n    if op == '!=':\n        return row_val != condition_val\n    if op == '>':\n        return row_val > condition_val\n    if op == '<':\n        return row_val < condition_val\n    if op == '>=':\n        return row_val >= condition_val\n    if op == '<=':\n        return row_val <= condition_val\n    return False  # Should be unreachable due to prior validation\n\ndef run_bounded_sql(query: str, rows: list[dict[str, int]]) -> list[dict[str, int]]:\n    \"\"\"\n    Execute a tiny SELECT-only SQL fragment over an in-memory table of rows.\n    \"\"\"\n    # 1. PRE-VALIDATION AND SETUP\n    lower_query = query.lower()\n    forbidden_keywords = [\n        'insert', 'update', 'delete', 'drop', 'create', 'alter', 'pragma'\n    ]\n    query_words = lower_query.split()\n    if any(keyword in query_words for keyword in forbidden_keywords):\n        raise ValueError(\"Mutating SQL statements are not allowed.\")\n    if ';' in query:\n        raise ValueError(\"Multi-statement queries are not allowed.\")\n\n    all_columns = set(rows[0].keys()) if rows else set()\n\n    # 2. PARSING\n    q = query.strip()\n    lower_q = q.lower()\n\n    if not lower_q.startswith('select '):\n        raise ValueError(\"Query must start with 'select '.\")\n\n    # Find clause boundaries using find() to be robust against spacing issues\n    from_pos = lower_q.find(' from ')\n    where_pos = lower_q.find(' where ')\n    limit_pos = lower_q.find(' limit ')\n\n    if from_pos == -1:\n        raise ValueError(\"Missing 'from' clause.\")\n\n    # Validate clause order\n    if where_pos != -1 and where_pos < from_pos:\n        raise ValueError(\"'where' clause must appear after 'from'.\")\n    if limit_pos != -1 and limit_pos < from_pos:\n        raise ValueError(\"'limit' clause must appear after 'from'.\")\n    if where_pos != -1 and limit_pos != -1 and limit_pos < where_pos:\n        raise ValueError(\"'limit' clause must appear after 'where'.\")\n\n    # Determine clause content boundaries\n    select_end = from_pos\n    from_end = where_pos if where_pos != -1 else (limit_pos if limit_pos != -1 else len(q))\n    where_end = limit_pos if limit_pos != -1 else len(q)\n\n    # Parse FROM clause\n    from_table_str = q[from_pos + len(' from '):from_end].strip()\n    if from_table_str.lower() != 'rows':\n        raise ValueError(\"Can only select from the table named 'rows'.\")\n\n    # Parse SELECT clause\n    select_cols_str = q[len('select '):select_end].strip()\n    is_select_all = False\n    if select_cols_str == '*':\n        is_select_all = True\n        selected_columns = sorted(list(all_columns))\n    else:\n        selected_columns = [c.strip() for c in select_cols_str.split(',')]\n        if not selected_columns or any(not c for c in selected_columns):\n            raise ValueError(\"Invalid column list in select clause.\")\n        for col in selected_columns:\n            if col not in all_columns:\n                raise ValueError(f\"Unknown column '{col}' in select list.\")\n\n    # Parse WHERE clause\n    where_clause = None\n    if where_pos != -1:\n        where_str = q[where_pos + len(' where '):where_end].strip()\n        parts = where_str.split()\n        if len(parts) != 3:\n            raise ValueError(\"Invalid 'where' clause format. Expected '<column> <op> <integer>'.\")\n        \n        col, op, val_str = parts\n        if col not in all_columns:\n            raise ValueError(f\"Unknown column '{col}' in 'where' clause.\")\n        \n        allowed_ops = ['=', '!=', '>', '<', '>=', '<=']\n        if op not in allowed_ops:\n            raise ValueError(f\"Unsupported operator '{op}' in 'where' clause.\")\n            \n        try:\n            val = int(val_str)\n        except ValueError:\n            raise ValueError(f\"'where' clause value must be an integer, but got '{val_str}'.\")\n        \n        where_clause = (col, op, val)\n\n    # Parse LIMIT clause\n    limit_val = None\n    if limit_pos != -1:\n        limit_str = q[limit_pos + len(' limit '):].strip()\n        try:\n            limit_val = int(limit_str)\n            if limit_val < 0:\n                raise ValueError(\"Limit value cannot be negative.\")\n        except ValueError:\n            raise ValueError(f\"Limit value must be an integer, but got '{limit_str}'.\")\n\n    # 3. EXECUTION\n    if not rows:\n        return []\n\n    # Stage 1: Filtering (WHERE)\n    if where_clause:\n        w_col, w_op, w_val = where_clause\n        current_rows = [row for row in rows if w_col in row and _evaluate_where_op(row[w_col], w_op, w_val)]\n    else:\n        current_rows = list(rows)\n\n    # Stage 2: Limiting (LIMIT)\n    if limit_val is not None:\n        current_rows = current_rows[:limit_val]\n\n    # Stage 3: Projection (SELECT) - returns copies to prevent mutation\n    if is_select_all:\n        result = [row.copy() for row in current_rows]\n    else:\n        result = [{col: row[col] for col in selected_columns} for row in current_rows]\n\n    return result",
+        "metrics": {
+          "passed_cases": 7,
+          "total_cases": 7
+        },
+        "summary": "query runner preserves the SELECT-only grammar on bounded safe and adversarial examples"
+      },
+      "constraints": [
+        "Support only SELECT <columns> FROM rows [WHERE <column> <op> <int>] [LIMIT <int>].",
+        "Reject DELETE, UPDATE, INSERT, DROP, ALTER, CREATE, PRAGMA, semicolons, and unknown columns.",
+        "Treat the input `rows` as the only table."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "run_bounded_sql",
+      "id": "bounded_sql_querier",
+      "iterations": 3,
+      "name": "Bounded SQL Querier",
+      "primary_invariant": "Only a safe SELECT grammar is allowed; mutating SQL or multi-statement queries must be rejected.",
+      "signature": "run_bounded_sql(query: str, rows: list[dict[str, int]]) -> list[dict[str, int]]",
+      "status": "verified",
+      "task": "Execute a tiny SELECT-only SQL fragment over an in-memory table of rows.",
+      "thesis": "A tiny SELECT-only fragment is easier to verify and still useful for agent retrieval.",
+      "verification_lane": "AST guard plus oracle-matched execution over safe and unsafe query fixtures."
+    },
+    {
+      "accepted_attempt": {
+        "code": null,
+        "metrics": {},
+        "summary": "forbidden capability reference detected: requests"
+      },
+      "constraints": [
+        "Reject localhost, private IPs, bare IP hosts, and non-HTTPS schemes.",
+        "Only the GET method is allowed.",
+        "Look up the final response in the provided responses map using the key '<METHOD> <URL>'."
+      ],
+      "evidence_level": "ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "safe_api_call",
+      "id": "safe_api_caller",
+      "iterations": 4,
+      "name": "Safe API Caller",
+      "primary_invariant": "Only HTTPS GET requests to explicitly allowlisted public hosts are permitted.",
+      "signature": "safe_api_call(url: str, method: str, allowlist: list[str], responses: dict[str, str]) -> str",
+      "status": "failed",
+      "task": "Validate an outbound API request against a strict allowlist and return a mocked response body.",
+      "thesis": "The network boundary belongs in the tool contract, not in the model's intentions.",
+      "verification_lane": "URL policy oracle covering scheme, host, IP, and method restrictions."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def append_only_log(existing: str, new_entry: str, max_bytes: int = 4096) -> str:\n    \"\"\"\n    Append a new log entry without mutating existing bytes and enforce a hard output-size cap.\n    \"\"\"\n    # Reject new entries containing NUL bytes, as they can cause issues.\n    if '\\x00' in new_entry:\n        raise ValueError(\"New entry cannot contain NUL bytes.\")\n\n    # Determine the separator: add a newline if the existing log is not empty\n    # and does not already end with one.\n    separator = \"\"\n    if existing and not existing.endswith('\\n'):\n        separator = '\\n'\n\n    # Construct the potential new log string. This ensures the primary invariant\n    # that the previous log remains a prefix.\n    new_log = existing + separator + new_entry\n\n    # Check the size limit against the byte representation of the string.\n    # We use UTF-8 as a standard and safe encoding choice.\n    if len(new_log.encode('utf-8')) > max_bytes:\n        raise ValueError(\n            f\"Appending new entry would exceed max_bytes of {max_bytes}.\"\n        )\n\n    return new_log",
+        "metrics": {
+          "passed_cases": 5,
+          "total_cases": 5
+        },
+        "summary": "logger preserves prefix monotonicity and bounded growth on bounded adversarial cases"
+      },
+      "constraints": [
+        "Preserve the full previous log exactly as a prefix.",
+        "If the existing log is non-empty and does not end with a newline, insert one before the new entry.",
+        "Reject outputs whose byte length would exceed max_bytes."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "append_only_log",
+      "id": "append_only_logger",
+      "iterations": 3,
+      "name": "Append-Only Logger",
+      "primary_invariant": "The previous log must remain a prefix of the new log; size must never exceed the configured bound.",
+      "signature": "append_only_log(existing: str, new_entry: str, max_bytes: int = 4096) -> str",
+      "status": "verified",
+      "task": "Append a new log entry without mutating existing bytes and enforce a hard output-size cap.",
+      "thesis": "Scratchpad memory is safest when writes become monotonic state transitions.",
+      "verification_lane": "Prefix-preservation checks and bounded byte-budget enforcement."
+    },
+    {
+      "accepted_attempt": {
+        "code": null,
+        "metrics": {},
+        "summary": "candidate code did not parse: unterminated string literal (detected at line 6)"
+      },
+      "constraints": [
+        "Replace matches with stable placeholders rather than deleting all surrounding context.",
+        "Handle multiple PII categories in one string.",
+        "Do not introduce new digits that recreate a banned pattern."
+      ],
+      "evidence_level": "syntax",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "mask_pii",
+      "id": "pii_masker",
+      "iterations": 4,
+      "name": "PII Masker",
+      "primary_invariant": "Masked output must not contain emails, US phone numbers, SSNs, or 16-digit card numbers recognized by the repository regex suite.",
+      "signature": "mask_pii(text: str) -> str",
+      "status": "failed",
+      "task": "Redact common PII patterns before text is sent to an LLM.",
+      "thesis": "Sanitization should fail closed on known high-risk PII classes before context leaves the host.",
+      "verification_lane": "Regex-backed fixture suite with stable placeholder expectations."
+    },
+    {
+      "accepted_attempt": {
+        "code": null,
+        "metrics": {},
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "constraints": [
+        "Support integers, variables, parentheses, unary minus, +, -, *, and //.",
+        "Reject function calls, attributes, exponentiation, unknown variables, and expressions with more than max_nodes AST nodes.",
+        "Return the same result as the reference interpreter on bounded inputs."
+      ],
+      "evidence_level": "ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "bounded_evaluate",
+      "id": "compute_bounded_evaluator",
+      "iterations": 4,
+      "name": "Compute-Bounded Evaluator",
+      "primary_invariant": "Only a bounded whitelist of arithmetic AST nodes is allowed, and evaluation must reject unsupported or oversized expressions.",
+      "signature": "bounded_evaluate(expression: str, variables: dict[str, int], max_nodes: int = 32) -> int",
+      "status": "failed",
+      "task": "Evaluate a tiny arithmetic expression language with explicit resource bounds.",
+      "thesis": "If the evaluator language is tiny, the verifier can exhaustively compare semantics on bounded cases.",
+      "verification_lane": "AST whitelist plus bounded arithmetic equivalence against a reference interpreter."
+    }
+  ],
+  "provider": "openai-compatible",
+  "tagline": "CEGIS for synthesizing safe agent tools under explicit environment invariants.",
+  "timeline": [
+    "Specify a micro-scoped tool and its primary invariant.",
+    "Generate a candidate implementation through the synthesis interface.",
+    "Run AST guards and bounded executable verifiers.",
+    "Feed the counterexample back into the next generation attempt.",
+    "Accept only the first candidate that satisfies the bounded verifier suite."
+  ],
+  "title": "VeriTool"
+}

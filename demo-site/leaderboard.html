@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VeriTool Leaderboard</title>
+    <meta
+      name="description"
+      content="Compare how each live model run performed across the VeriTool benchmark."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <canvas class="graph-background" id="graph-background" aria-hidden="true"></canvas>
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="./index.html">VeriTool</a>
+        <nav class="nav">
+          <a href="./index.html#idea">Idea</a>
+          <a href="./index.html#results">Results</a>
+          <a href="./trajectories.html">Trajectories</a>
+          <a href="./leaderboard.html">Leaderboard</a>
+          <a href="./index.html#vision">Vision</a>
+          <a href="./index.html#limits">Limits</a>
+        </nav>
+      </header>
+
+      <main>
+        <section class="hero trajectory-hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Live Comparison / Multi-Model</p>
+            <h1>Compare which models repaired verifier failures under the same budget.</h1>
+            <p class="lede">
+              Every model here saw the same six tools, the same verifier loop, and the same four-call budget. The leaderboard shows
+              who converged, how quickly they converged, and where they ran out of room.
+            </p>
+          </div>
+
+          <aside class="hero-panel">
+            <p class="panel-kicker">Leaderboard snapshot</p>
+            <div class="stat-grid" id="leaderboard-stats">
+              <div class="stat-card">
+                <span>Loading</span>
+                <strong>...</strong>
+              </div>
+            </div>
+            <p class="panel-note">
+              A tool counts as a pass only if it converges to a verifier-approved implementation within the shared 4-call budget.
+              Ranking is based first on passed tools, then on lower average iterations.
+            </p>
+          </aside>
+        </section>
+
+        <section class="section">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Ranking</p>
+              <h2>Model leaderboard</h2>
+            </div>
+            <p class="section-copy">
+              Every entry below comes from the same six-tool suite and the same four-iteration budget per tool.
+            </p>
+          </div>
+          <div class="leaderboard-grid" id="leaderboard-grid"></div>
+        </section>
+
+        <section class="section">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Per-tool outcomes</p>
+              <h2>Where each model converged or exhausted budget</h2>
+            </div>
+          </div>
+          <div class="leaderboard-table-wrap">
+            <table class="leaderboard-table" id="leaderboard-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Converged</th>
+                  <th>Avg iterations</th>
+                  <th>Per-tool result</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./graph-background.js"></script>
+    <script src="./leaderboard.js"></script>
+  </body>
+</html>

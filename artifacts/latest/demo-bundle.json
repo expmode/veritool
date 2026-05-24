@@ -1,0 +1,273 @@
+{
+  "aggregate_metrics": {
+    "average_iterations": 2.0,
+    "failed_tools": 0,
+    "passed_tools": 6,
+    "success_rate": 1.0,
+    "tool_count": 6,
+    "total_iterations": 12
+  },
+  "casefiles": [
+    {
+      "accepted_attempt": {
+        "code": "def read_local_context(base_dir: str, requested_path: str, file_map: dict[str, str]) -> str:\n    if requested_path.startswith(\"/\"):\n        raise ValueError(\"absolute paths are forbidden\")\n    normalized_base = posixpath.normpath(base_dir)\n    normalized_path = posixpath.normpath(posixpath.join(normalized_base, requested_path))\n    if normalized_path != normalized_base and not normalized_path.startswith(normalized_base + \"/\"):\n        raise ValueError(\"path escapes base directory\")\n    if not normalized_path.endswith(\".txt\"):\n        raise ValueError(\"only .txt files are allowed\")\n    return file_map[normalized_path]",
+        "metrics": {
+          "passed_cases": 7,
+          "total_cases": 7
+        },
+        "summary": "reader enforces normalized safe-path and extension invariants on bounded adversarial cases"
+      },
+      "constraints": [
+        "Reject absolute paths and any normalized path outside the base directory.",
+        "Reject files whose normalized path does not end in .txt.",
+        "Do not touch the real filesystem; use only the provided file_map."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "A valid path should not crash the synthesized reader.",
+          "payload": {
+            "error": "'/safe_env/docs/./nested/../nested/notes.txt'",
+            "requested_path": "./nested/../nested/notes.txt"
+          },
+          "title": "reader_exception"
+        },
+        "summary": "reader crashed on a valid safe path"
+      },
+      "function_name": "read_local_context",
+      "id": "local_context_reader",
+      "iterations": 2,
+      "name": "Local Context Reader",
+      "primary_invariant": "A request may only read `.txt` files that remain inside the declared safe base directory after normalization.",
+      "signature": "read_local_context(base_dir: str, requested_path: str, file_map: dict[str, str]) -> str",
+      "status": "verified",
+      "task": "Normalize a user-requested relative path, reject traversal or non-.txt access, and read the content from the provided in-memory file map.",
+      "thesis": "The reader must treat path normalization as a safety boundary rather than a convenience feature.",
+      "verification_lane": "AST guard plus bounded adversarial path coverage over normalized in-memory file access."
+    },
+    {
+      "accepted_attempt": {
+        "code": "SQL_PATTERN = re.compile(\n    r\"^SELECT\\s+(?P<columns>\\*|[a-z_,\\s]+)\\s+FROM\\s+rows(?:\\s+WHERE\\s+(?P<where_column>[a-z_]+)\\s*(?P<where_op>=|>=|<=|>|<)\\s*(?P<where_value>-?\\d+))?(?:\\s+LIMIT\\s+(?P<limit>\\d+))?$\",\n    re.IGNORECASE,\n)\n\n\ndef run_bounded_sql(query: str, rows: list[dict[str, int]]) -> list[dict[str, int]]:\n    lowered = query.lower()\n    if \";\" in query or any(keyword in lowered for keyword in (\"delete\", \"update\", \"insert\", \"drop\", \"alter\", \"create\", \"pragma\")):\n        raise ValueError(\"mutating SQL is forbidden\")\n    match = SQL_PATTERN.fullmatch(query.strip())\n    if not match:\n        raise ValueError(\"unsupported query grammar\")\n    columns_text = match.group(\"columns\")\n    columns = list(rows[0]) if columns_text == \"*\" else [column.strip() for column in columns_text.split(\",\")]\n    for column in columns:\n        if column not in rows[0]:\n            raise ValueError(\"unknown selected column\")\n    filtered = [dict(row) for row in rows]\n    where_column = match.group(\"where_column\")\n    if where_column:\n        if where_column not in rows[0]:\n            raise ValueError(\"unknown where column\")\n        where_value = int(match.group(\"where_value\"))\n        where_op = match.group(\"where_op\")\n        filtered = [row for row in filtered if _compare(row[where_column], where_op, where_value)]\n    limit_text = match.group(\"limit\")\n    if limit_text is not None:\n        filtered = filtered[: int(limit_text)]\n    return [{column: row[column] for column in columns} for row in filtered]\n\n\ndef _compare(left: int, op: str, right: int) -> bool:\n    if op == \"=\":\n        return left == right\n    if op == \">=\":\n        return left >= right\n    if op == \"<=\":\n        return left <= right\n    if op == \">\":\n        return left > right\n    return left < right",
+        "metrics": {
+          "passed_cases": 7,
+          "total_cases": 7
+        },
+        "summary": "query runner preserves the SELECT-only grammar on bounded safe and adversarial examples"
+      },
+      "constraints": [
+        "Support only SELECT <columns> FROM rows [WHERE <column> <op> <int>] [LIMIT <int>].",
+        "Reject DELETE, UPDATE, INSERT, DROP, ALTER, CREATE, PRAGMA, semicolons, and unknown columns.",
+        "Treat the input `rows` as the only table."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "A safe query should match the reference interpreter exactly.",
+          "payload": {
+            "actual": [
+              {
+                "id": 1,
+                "owner": 1,
+                "score": 7
+              },
+              {
+                "id": 2,
+                "owner": 2,
+                "score": 3
+              },
+              {
+                "id": 3,
+                "owner": 1,
+                "score": 10
+              }
+            ],
+            "expected": [
+              {
+                "id": 1,
+                "score": 7
+              },
+              {
+                "id": 3,
+                "score": 10
+              }
+            ],
+            "query": "SELECT id,score FROM rows WHERE score >= 7"
+          },
+          "title": "sql_oracle_mismatch"
+        },
+        "summary": "valid SELECT query disagreed with the bounded SQL oracle"
+      },
+      "function_name": "run_bounded_sql",
+      "id": "bounded_sql_querier",
+      "iterations": 2,
+      "name": "Bounded SQL Querier",
+      "primary_invariant": "Only a safe SELECT grammar is allowed; mutating SQL or multi-statement queries must be rejected.",
+      "signature": "run_bounded_sql(query: str, rows: list[dict[str, int]]) -> list[dict[str, int]]",
+      "status": "verified",
+      "task": "Execute a tiny SELECT-only SQL fragment over an in-memory table of rows.",
+      "thesis": "A tiny SELECT-only fragment is easier to verify and still useful for agent retrieval.",
+      "verification_lane": "AST guard plus oracle-matched execution over safe and unsafe query fixtures."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def safe_api_call(url: str, method: str, allowlist: list[str], responses: dict[str, str]) -> str:\n    method = method.upper()\n    if method != \"GET\":\n        raise ValueError(\"only GET is allowed\")\n    parsed = urllib_parse.urlparse(url)\n    if parsed.scheme != \"https\":\n        raise ValueError(\"only https is allowed\")\n    host = parsed.hostname\n    if not host:\n        raise ValueError(\"missing host\")\n    if host == \"localhost\":\n        raise ValueError(\"localhost is forbidden\")\n    try:\n        ip = ipaddress.ip_address(host)\n    except ValueError:\n        ip = None\n    if ip is not None:\n        if ip.is_private or ip.is_loopback or ip.is_link_local:\n            raise ValueError(\"private host is forbidden\")\n        raise ValueError(\"bare IP hosts are forbidden\")\n    if host not in allowlist:\n        raise ValueError(\"host is not allowlisted\")\n    key = f\"{method} {url}\"\n    if key not in responses:\n        raise ValueError(\"missing mocked response\")\n    return responses[key]",
+        "metrics": {
+          "passed_cases": 8,
+          "total_cases": 8
+        },
+        "summary": "API caller enforces scheme, host, and method restrictions on bounded adversarial cases"
+      },
+      "constraints": [
+        "Reject localhost, private IPs, bare IP hosts, and non-HTTPS schemes.",
+        "Only the GET method is allowed.",
+        "Look up the final response in the provided responses map using the key '<METHOD> <URL>'."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Unsafe requests should raise ValueError under the policy.",
+          "payload": {
+            "error": "'GET http://api.safe.test/v1/summary'",
+            "method": "GET",
+            "url": "http://api.safe.test/v1/summary"
+          },
+          "title": "unsafe_request_wrong_error"
+        },
+        "summary": "unsafe request raised the wrong error type"
+      },
+      "function_name": "safe_api_call",
+      "id": "safe_api_caller",
+      "iterations": 2,
+      "name": "Safe API Caller",
+      "primary_invariant": "Only HTTPS GET requests to explicitly allowlisted public hosts are permitted.",
+      "signature": "safe_api_call(url: str, method: str, allowlist: list[str], responses: dict[str, str]) -> str",
+      "status": "verified",
+      "task": "Validate an outbound API request against a strict allowlist and return a mocked response body.",
+      "thesis": "The network boundary belongs in the tool contract, not in the model's intentions.",
+      "verification_lane": "URL policy oracle covering scheme, host, IP, and method restrictions."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def append_only_log(existing: str, new_entry: str, max_bytes: int = 4096) -> str:\n    if \"\\0\" in new_entry:\n        raise ValueError(\"NUL bytes are forbidden\")\n    result = existing\n    if result and not result.endswith(\"\\n\"):\n        result += \"\\n\"\n    result += new_entry\n    if len(result.encode(\"utf-8\")) > max_bytes:\n        raise ValueError(\"result exceeds byte budget\")\n    return result",
+        "metrics": {
+          "passed_cases": 5,
+          "total_cases": 5
+        },
+        "summary": "logger preserves prefix monotonicity and bounded growth on bounded adversarial cases"
+      },
+      "constraints": [
+        "Preserve the full previous log exactly as a prefix.",
+        "If the existing log is non-empty and does not end with a newline, insert one before the new entry.",
+        "Reject outputs whose byte length would exceed max_bytes."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "The logger must preserve the prior log exactly while appending one new entry.",
+          "payload": {
+            "actual": "seednext event",
+            "existing": "seed",
+            "expected": "seed\nnext event",
+            "new_entry": "next event"
+          },
+          "title": "append_mismatch"
+        },
+        "summary": "append-only logger disagreed with the reference append semantics"
+      },
+      "function_name": "append_only_log",
+      "id": "append_only_logger",
+      "iterations": 2,
+      "name": "Append-Only Logger",
+      "primary_invariant": "The previous log must remain a prefix of the new log; size must never exceed the configured bound.",
+      "signature": "append_only_log(existing: str, new_entry: str, max_bytes: int = 4096) -> str",
+      "status": "verified",
+      "task": "Append a new log entry without mutating existing bytes and enforce a hard output-size cap.",
+      "thesis": "Scratchpad memory is safest when writes become monotonic state transitions.",
+      "verification_lane": "Prefix-preservation checks and bounded byte-budget enforcement."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def mask_pii(text: str) -> str:\n    text = re.sub(r\"\\b(?:\\d{4}-){3}\\d{4}\\b\", \"[CARD]\", text)\n    text = re.sub(r\"\\b\\d{3}-\\d{2}-\\d{4}\\b\", \"[SSN]\", text)\n    text = re.sub(r\"\\b\\d{3}[- ]\\d{3}[- ]\\d{4}\\b\", \"[PHONE]\", text)\n    text = re.sub(r\"\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b\", \"[EMAIL]\", text)\n    return text",
+        "metrics": {
+          "passed_cases": 3,
+          "total_cases": 3
+        },
+        "summary": "masker removes all configured PII classes on bounded fixture coverage"
+      },
+      "constraints": [
+        "Replace matches with stable placeholders rather than deleting all surrounding context.",
+        "Handle multiple PII categories in one string.",
+        "Do not introduce new digits that recreate a banned pattern."
+      ],
+      "evidence_level": "bounded-execution + regex-check",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "The masker should preserve context while replacing the matched PII token with the expected placeholder.",
+          "payload": {
+            "actual": "Alice [EMAIL] called 555-123-4567 with card 4111-1111-1111-1111.",
+            "expected": "Alice [EMAIL] called [PHONE] with card [CARD].",
+            "text": "Alice alice@example.com called 555-123-4567 with card 4111-1111-1111-1111."
+          },
+          "title": "masking_mismatch"
+        },
+        "summary": "masker did not produce the expected stable redaction"
+      },
+      "function_name": "mask_pii",
+      "id": "pii_masker",
+      "iterations": 2,
+      "name": "PII Masker",
+      "primary_invariant": "Masked output must not contain emails, US phone numbers, SSNs, or 16-digit card numbers recognized by the repository regex suite.",
+      "signature": "mask_pii(text: str) -> str",
+      "status": "verified",
+      "task": "Redact common PII patterns before text is sent to an LLM.",
+      "thesis": "Sanitization should fail closed on known high-risk PII classes before context leaves the host.",
+      "verification_lane": "Regex-backed fixture suite with stable placeholder expectations."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def bounded_evaluate(expression: str, variables: dict[str, int], max_nodes: int = 32) -> int:\n    tree = ast.parse(expression, mode=\"eval\")\n    if sum(1 for _ in ast.walk(tree)) > max_nodes:\n        raise ValueError(\"expression exceeds node budget\")\n    return _walk(tree.body, variables)\n\n\ndef _walk(node, variables):\n    if isinstance(node, ast.Constant) and isinstance(node.value, int):\n        return node.value\n    if isinstance(node, ast.Name):\n        if node.id not in variables:\n            raise ValueError(\"unknown variable\")\n        return int(variables[node.id])\n    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):\n        return -_walk(node.operand, variables)\n    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv)):\n        left = _walk(node.left, variables)\n        right = _walk(node.right, variables)\n        if isinstance(node.op, ast.Add):\n            return left + right\n        if isinstance(node.op, ast.Sub):\n            return left - right\n        if isinstance(node.op, ast.Mult):\n            return left * right\n        if right == 0:\n            raise ValueError(\"division by zero\")\n        return left // right\n    raise ValueError(\"unsupported syntax\")",
+        "metrics": {
+          "passed_cases": 12,
+          "total_cases": 12
+        },
+        "summary": "evaluator matches the bounded arithmetic oracle and rejects unsupported syntax"
+      },
+      "constraints": [
+        "Support integers, variables, parentheses, unary minus, +, -, *, and //.",
+        "Reject function calls, attributes, exponentiation, unknown variables, and expressions with more than max_nodes AST nodes.",
+        "Return the same result as the reference interpreter on bounded inputs."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "The evaluator must reject syntax outside the approved grammar.",
+          "payload": {
+            "expression": "x ** 2"
+          },
+          "title": "unsupported_expression"
+        },
+        "summary": "unsupported expression was accepted"
+      },
+      "function_name": "bounded_evaluate",
+      "id": "compute_bounded_evaluator",
+      "iterations": 2,
+      "name": "Compute-Bounded Evaluator",
+      "primary_invariant": "Only a bounded whitelist of arithmetic AST nodes is allowed, and evaluation must reject unsupported or oversized expressions.",
+      "signature": "bounded_evaluate(expression: str, variables: dict[str, int], max_nodes: int = 32) -> int",
+      "status": "verified",
+      "task": "Evaluate a tiny arithmetic expression language with explicit resource bounds.",
+      "thesis": "If the evaluator language is tiny, the verifier can exhaustively compare semantics on bounded cases.",
+      "verification_lane": "AST whitelist plus bounded arithmetic equivalence against a reference interpreter."
+    }
+  ],
+  "provider": "replay",
+  "tagline": "CEGIS for synthesizing safe agent tools under explicit environment invariants.",
+  "timeline": [
+    "Specify a micro-scoped tool and its primary invariant.",
+    "Generate a candidate implementation through the synthesis interface.",
+    "Run AST guards and bounded executable verifiers.",
+    "Feed the counterexample back into the next generation attempt.",
+    "Accept only the first candidate that satisfies the bounded verifier suite."
+  ],
+  "title": "VeriTool"
+}

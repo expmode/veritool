@@ -1,0 +1,434 @@
+{
+  "aggregate_metrics": {
+    "average_iterations": 3.5,
+    "failed_tools": 2,
+    "passed_tools": 4,
+    "success_rate": 0.667,
+    "tool_count": 6,
+    "total_iterations": 21
+  },
+  "finished_at": "2026-05-24T21:49:28+00:00",
+  "provider": "openai-compatible",
+  "started_at": "2026-05-24T21:48:14+00:00",
+  "suite_name": "VeriTool Full Suite",
+  "tools": [
+    {
+      "accepted_code": "def read_local_context(base_dir: str, requested_path: str, file_map: dict[str, str]) -> str:\n    # Helper function to normalize paths\n    def normalize_path(base: str, path: str) -> str:\n        # Split the base and path into components\n        base_components = base.split('/')\n        path_components = path.split('/')\n        \n        # Initialize the normalized path with the base components\n        normalized_components = base_components[:]\n        \n        # Process each component in the requested path\n        for component in path_components:\n            if component == '' or component == '.':\n                # Skip empty or current directory components\n                continue\n            elif component == '..':\n                # Pop the last component if possible (move up one directory)\n                if len(normalized_components) > len(base_components):\n                    normalized_components.pop()\n            else:\n                # Add the new directory or file to the path\n                normalized_components.append(component)\n        \n        # Join the components back into a normalized path\n        return '/'.join(normalized_components)\n\n    # Reject absolute paths\n    if requested_path.startswith('/'):\n        raise ValueError(\"Error: Absolute paths are not allowed.\")\n    \n    # Normalize the requested path\n    normalized_path = normalize_path(base_dir, requested_path)\n    \n    # Check if the normalized path is within the base directory\n    if not normalized_path.startswith(base_dir):\n        raise ValueError(\"Error: Path traversal detected or path is outside the base directory.\")\n    \n    # Check if the file has a .txt extension\n    if not normalized_path.endswith('.txt'):\n        raise ValueError(\"Error: Only .txt files are allowed.\")\n    \n    # Check if the normalized path exists in the file map\n    if normalized_path not in file_map:\n        raise ValueError(\"Error: File not found in the provided file map.\")\n    \n    # Return the content of the file from the file map\n    return file_map[normalized_path]",
+      "accepted_metrics": {
+        "passed_cases": 7,
+        "total_cases": 7
+      },
+      "evidence_level": "bounded-execution + ast-guard",
+      "iterations": 4,
+      "passed": true,
+      "provider": "openai-compatible",
+      "replay_source": null,
+      "tool_id": "local_context_reader",
+      "tool_name": "Local Context Reader",
+      "traces": [
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 1,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "A valid in-scope path did not resolve to the expected file contents.",
+            "payload": {
+              "actual": "Error: Path traversal detected or path is outside the base directory.",
+              "expected": "chapter one",
+              "requested_path": "ch1.txt"
+            },
+            "title": "safe_path_mismatch"
+          },
+          "evidence_level": "bounded-execution",
+          "iteration": 2,
+          "metrics": {
+            "passed_cases": 0,
+            "total_cases": 7
+          },
+          "passed": false,
+          "summary": "valid safe path produced the wrong file content"
+        },
+        {
+          "counterexample": {
+            "description": "A path outside the safe environment should have raised ValueError.",
+            "payload": {
+              "requested_path": "../secret.txt"
+            },
+            "title": "unsafe_path_accepted"
+          },
+          "evidence_level": "bounded-execution",
+          "iteration": 3,
+          "metrics": {
+            "passed_cases": 3,
+            "total_cases": 7
+          },
+          "passed": false,
+          "summary": "unsafe path was accepted"
+        },
+        {
+          "counterexample": null,
+          "evidence_level": "bounded-execution + ast-guard",
+          "iteration": 4,
+          "metrics": {
+            "passed_cases": 7,
+            "total_cases": 7
+          },
+          "passed": true,
+          "summary": "reader enforces normalized safe-path and extension invariants on bounded adversarial cases"
+        }
+      ]
+    },
+    {
+      "accepted_code": "def run_bounded_sql(query: str, rows: list[dict[str, int]]) -> list[dict[str, int]]:\n    def parse_query(query: str):\n        # Basic checks for forbidden keywords and semicolons\n        forbidden_keywords = [\"DELETE\", \"UPDATE\", \"INSERT\", \"DROP\", \"ALTER\", \"CREATE\", \"PRAGMA\", \";\"]\n        for keyword in forbidden_keywords:\n            if keyword in query.upper():\n                raise ValueError(f\"Forbidden keyword detected: {keyword}\")\n\n        # Split query into parts\n        parts = query.strip().split()\n        if len(parts) < 4 or parts[0].upper() != \"SELECT\" or parts[2].upper() != \"FROM\":\n            raise ValueError(\"Invalid query format\")\n\n        # Extract columns\n        columns = parts[1].split(',')\n        if columns == ['*']:\n            columns = list(rows[0].keys()) if rows else []\n\n        # Check for unknown columns\n        for column in columns:\n            if column not in rows[0]:\n                raise ValueError(f\"Unknown column: {column}\")\n\n        # Extract WHERE clause if present\n        where_clause = None\n        limit = None\n        if \"WHERE\" in parts:\n            where_index = parts.index(\"WHERE\")\n            where_clause = parts[where_index + 1:where_index + 4]\n            if len(where_clause) != 3:\n                raise ValueError(\"Invalid WHERE clause format\")\n            if where_clause[0] not in rows[0]:\n                raise ValueError(f\"Unknown column in WHERE clause: {where_clause[0]}\")\n            if where_clause[1] not in [\"=\", \">\", \"<\", \">=\", \"<=\"]:\n                raise ValueError(f\"Invalid operator in WHERE clause: {where_clause[1]}\")\n            try:\n                where_clause[2] = int(where_clause[2])\n            except ValueError:\n                raise ValueError(\"WHERE clause value must be an integer\")\n\n        # Extract LIMIT clause if present\n        if \"LIMIT\" in parts:\n            limit_index = parts.index(\"LIMIT\")\n            try:\n                limit = int(parts[limit_index + 1])\n            except (IndexError, ValueError):\n                raise ValueError(\"Invalid LIMIT clause format\")\n\n        return columns, where_clause, limit\n\n    def apply_where_clause(row, where_clause):\n        if not where_clause:\n            return True\n        column, operator, value = where_clause\n        if operator == \"=\":\n            return row[column] == value\n        elif operator == \">\":\n            return row[column] > value\n        elif operator == \"<\":\n            return row[column] < value\n        elif operator == \">=\":\n            return row[column] >= value\n        elif operator == \"<=\":\n            return row[column] <= value\n        return False\n\n    columns, where_clause, limit = parse_query(query)\n    filtered_rows = [row for row in rows if apply_where_clause(row, where_clause)]\n    selected_rows = [{col: row[col] for col in columns} for row in filtered_rows]\n\n    if limit is not None:\n        return selected_rows[:limit]\n    return selected_rows",
+      "accepted_metrics": {
+        "passed_cases": 7,
+        "total_cases": 7
+      },
+      "evidence_level": "bounded-execution + ast-guard",
+      "iterations": 3,
+      "passed": true,
+      "provider": "openai-compatible",
+      "replay_source": null,
+      "tool_id": "bounded_sql_querier",
+      "tool_name": "Bounded SQL Querier",
+      "traces": [
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 1,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "A safe query should execute cleanly in the bounded runner.",
+            "payload": {
+              "error": "Unknown column: *",
+              "query": "SELECT * FROM rows"
+            },
+            "title": "sql_exception"
+          },
+          "evidence_level": "bounded-execution",
+          "iteration": 2,
+          "metrics": {
+            "passed_cases": 0,
+            "total_cases": 7
+          },
+          "passed": false,
+          "summary": "valid SELECT query crashed the candidate"
+        },
+        {
+          "counterexample": null,
+          "evidence_level": "bounded-execution + ast-guard",
+          "iteration": 3,
+          "metrics": {
+            "passed_cases": 7,
+            "total_cases": 7
+          },
+          "passed": true,
+          "summary": "query runner preserves the SELECT-only grammar on bounded safe and adversarial examples"
+        }
+      ]
+    },
+    {
+      "accepted_code": null,
+      "accepted_metrics": {},
+      "evidence_level": "bounded-execution",
+      "iterations": 4,
+      "passed": false,
+      "provider": "openai-compatible",
+      "replay_source": null,
+      "tool_id": "safe_api_caller",
+      "tool_name": "Safe API Caller",
+      "traces": [
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 1,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "An allowlisted public request should return the same mocked body as the reference policy.",
+            "payload": {
+              "actual": "Error: Only GET method is allowed.",
+              "expected": "docs",
+              "method": "get",
+              "url": "https://docs.safe.test/readme"
+            },
+            "title": "api_oracle_mismatch"
+          },
+          "evidence_level": "bounded-execution",
+          "iteration": 2,
+          "metrics": {
+            "passed_cases": 1,
+            "total_cases": 8
+          },
+          "passed": false,
+          "summary": "safe request did not match mocked API oracle output"
+        },
+        {
+          "counterexample": {
+            "description": "An allowlisted public request should return the same mocked body as the reference policy.",
+            "payload": {
+              "actual": "Error: URL is not allowlisted.",
+              "expected": "{\"status\":\"ok\"}",
+              "method": "GET",
+              "url": "https://api.safe.test/v1/summary"
+            },
+            "title": "api_oracle_mismatch"
+          },
+          "evidence_level": "bounded-execution",
+          "iteration": 3,
+          "metrics": {
+            "passed_cases": 0,
+            "total_cases": 8
+          },
+          "passed": false,
+          "summary": "safe request did not match mocked API oracle output"
+        },
+        {
+          "counterexample": {
+            "description": "An allowlisted public request should return the same mocked body as the reference policy.",
+            "payload": {
+              "actual": "Error: URL is not allowlisted.",
+              "expected": "{\"status\":\"ok\"}",
+              "method": "GET",
+              "url": "https://api.safe.test/v1/summary"
+            },
+            "title": "api_oracle_mismatch"
+          },
+          "evidence_level": "bounded-execution",
+          "iteration": 4,
+          "metrics": {
+            "passed_cases": 0,
+            "total_cases": 8
+          },
+          "passed": false,
+          "summary": "safe request did not match mocked API oracle output"
+        }
+      ]
+    },
+    {
+      "accepted_code": "def append_only_log(existing: str, new_entry: str, max_bytes: int = 4096) -> str:\n    # Check for NUL bytes in the new entry\n    if '\\x00' in new_entry:\n        raise ValueError(\"New entry contains NUL bytes, which are not allowed.\")\n    \n    # Prepare the separator if needed\n    separator = '\\n' if existing and not existing.endswith('\\n') else ''\n    \n    # Construct the new log\n    new_log = existing + separator + new_entry\n    \n    # Check if the new log exceeds the maximum allowed bytes\n    if len(new_log.encode('utf-8')) > max_bytes:\n        raise ValueError(\"Appending the new entry would exceed the maximum allowed size.\")\n    \n    return new_log",
+      "accepted_metrics": {
+        "passed_cases": 5,
+        "total_cases": 5
+      },
+      "evidence_level": "bounded-execution + ast-guard",
+      "iterations": 3,
+      "passed": true,
+      "provider": "openai-compatible",
+      "replay_source": null,
+      "tool_id": "append_only_logger",
+      "tool_name": "Append-Only Logger",
+      "traces": [
+        {
+          "counterexample": {
+            "description": "Oversized writes and NUL bytes should be rejected.",
+            "payload": {
+              "existing": "",
+              "max_bytes": 64,
+              "new_entry": "abc\u0000def"
+            },
+            "title": "invalid_append_accepted"
+          },
+          "evidence_level": "bounded-execution",
+          "iteration": 1,
+          "metrics": {
+            "passed_cases": 4,
+            "total_cases": 5
+          },
+          "passed": false,
+          "summary": "invalid append request was accepted"
+        },
+        {
+          "counterexample": {
+            "description": "Oversized writes and NUL bytes should be rejected.",
+            "payload": {
+              "existing": "seed",
+              "max_bytes": 16,
+              "new_entry": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            },
+            "title": "invalid_append_accepted"
+          },
+          "evidence_level": "bounded-execution",
+          "iteration": 2,
+          "metrics": {
+            "passed_cases": 3,
+            "total_cases": 5
+          },
+          "passed": false,
+          "summary": "invalid append request was accepted"
+        },
+        {
+          "counterexample": null,
+          "evidence_level": "bounded-execution + ast-guard",
+          "iteration": 3,
+          "metrics": {
+            "passed_cases": 5,
+            "total_cases": 5
+          },
+          "passed": true,
+          "summary": "logger preserves prefix monotonicity and bounded growth on bounded adversarial cases"
+        }
+      ]
+    },
+    {
+      "accepted_code": "def mask_pii(text: str) -> str:\n    def mask_email(text):\n        # Simple regex for email matching\n        return re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}', '[EMAIL]', text)\n\n    def mask_phone(text):\n        # US phone number patterns\n        return re.sub(r'\\b(?:\\d{3}[-.\\s]?){2}\\d{4}\\b', '[PHONE]', text)\n\n    def mask_ssn(text):\n        # US SSN pattern\n        return re.sub(r'\\b\\d{3}-\\d{2}-\\d{4}\\b', '[SSN]', text)\n\n    def mask_credit_card(text):\n        # 16-digit credit card pattern\n        return re.sub(r'\\b(?:\\d{4}[-.\\s]?){3}\\d{4}\\b', '[CARD]', text)\n\n    # Apply each mask function in sequence\n    text = mask_email(text)\n    text = mask_phone(text)\n    text = mask_ssn(text)\n    text = mask_credit_card(text)\n\n    return text\n\n# Example usage:\n# print(mask_pii(\"Alice alice@example.com called 555-123-4567 with card 4111-1111-1111-1111.\"))",
+      "accepted_metrics": {
+        "passed_cases": 3,
+        "total_cases": 3
+      },
+      "evidence_level": "bounded-execution + regex-check",
+      "iterations": 3,
+      "passed": true,
+      "provider": "openai-compatible",
+      "replay_source": null,
+      "tool_id": "pii_masker",
+      "tool_name": "PII Masker",
+      "traces": [
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 1,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "The masker should preserve context while replacing the matched PII token with the expected placeholder.",
+            "payload": {
+              "actual": "Alice [EMAIL] called [PHONE] with card [CREDIT_CARD].",
+              "expected": "Alice [EMAIL] called [PHONE] with card [CARD].",
+              "text": "Alice alice@example.com called 555-123-4567 with card 4111-1111-1111-1111."
+            },
+            "title": "masking_mismatch"
+          },
+          "evidence_level": "bounded-execution",
+          "iteration": 2,
+          "metrics": {
+            "passed_cases": 0,
+            "total_cases": 3
+          },
+          "passed": false,
+          "summary": "masker did not produce the expected stable redaction"
+        },
+        {
+          "counterexample": null,
+          "evidence_level": "bounded-execution + regex-check",
+          "iteration": 3,
+          "metrics": {
+            "passed_cases": 3,
+            "total_cases": 3
+          },
+          "passed": true,
+          "summary": "masker removes all configured PII classes on bounded fixture coverage"
+        }
+      ]
+    },
+    {
+      "accepted_code": null,
+      "accepted_metrics": {},
+      "evidence_level": "ast-guard",
+      "iterations": 4,
+      "passed": false,
+      "provider": "openai-compatible",
+      "replay_source": null,
+      "tool_id": "compute_bounded_evaluator",
+      "tool_name": "Compute-Bounded Evaluator",
+      "traces": [
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 1,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "The candidate did not expose the requested function cleanly.",
+            "payload": {
+              "error": "__build_class__ not found",
+              "function_name": "bounded_evaluate"
+            },
+            "title": "load_failure"
+          },
+          "evidence_level": "loader",
+          "iteration": 2,
+          "metrics": {},
+          "passed": false,
+          "summary": "candidate failed to load: __build_class__ not found"
+        },
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 3,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 4,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        }
+      ]
+    }
+  ]
+}

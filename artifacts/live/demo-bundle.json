@@ -1,0 +1,234 @@
+{
+  "aggregate_metrics": {
+    "average_iterations": 3.17,
+    "failed_tools": 2,
+    "passed_tools": 4,
+    "success_rate": 0.667,
+    "tool_count": 6,
+    "total_iterations": 19
+  },
+  "casefiles": [
+    {
+      "accepted_attempt": {
+        "code": "def read_local_context(base_dir: str, requested_path: str, file_map: dict[str, str]) -> str:\n    def normalize_path(base: str, path: str) -> str:\n        # Split the base and path into components\n        base_components = base.split('/')\n        path_components = path.split('/')\n        \n        # Initialize the normalized path with the base components\n        normalized_components = base_components[:]\n        \n        # Process each component in the requested path\n        for component in path_components:\n            if component == '' or component == '.':\n                # Ignore empty or current directory references\n                continue\n            elif component == '..':\n                # Pop the last component if possible (stay within base)\n                if len(normalized_components) > len(base_components):\n                    normalized_components.pop()\n            else:\n                # Add the new directory or file to the path\n                normalized_components.append(component)\n        \n        # Join the components back into a normalized path\n        return '/'.join(normalized_components)\n    \n    # Ensure the base_dir does not end with a slash\n    if base_dir.endswith('/'):\n        base_dir = base_dir[:-1]\n    \n    # Normalize the requested path\n    normalized_path = normalize_path(base_dir, requested_path)\n    \n    # Check if the normalized path is within the base directory\n    if not normalized_path.startswith(base_dir):\n        raise ValueError(\"Access outside the base directory is not allowed.\")\n    \n    # Check if the normalized path ends with .txt\n    if not normalized_path.endswith('.txt'):\n        raise ValueError(\"Only .txt files are allowed.\")\n    \n    # Check if the normalized path is in the file map\n    if normalized_path not in file_map:\n        raise ValueError(\"File not found in the provided file map.\")\n    \n    # Return the content of the file from the file map\n    return file_map[normalized_path]",
+        "metrics": {
+          "passed_cases": 7,
+          "total_cases": 7
+        },
+        "summary": "reader enforces normalized safe-path and extension invariants on bounded adversarial cases"
+      },
+      "constraints": [
+        "Reject absolute paths and any normalized path outside the base directory.",
+        "Reject files whose normalized path does not end in .txt.",
+        "Do not touch the real filesystem; use only the provided file_map."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "read_local_context",
+      "id": "local_context_reader",
+      "iterations": 3,
+      "name": "Local Context Reader",
+      "primary_invariant": "A request may only read `.txt` files that remain inside the declared safe base directory after normalization.",
+      "signature": "read_local_context(base_dir: str, requested_path: str, file_map: dict[str, str]) -> str",
+      "status": "verified",
+      "task": "Normalize a user-requested relative path, reject traversal or non-.txt access, and read the content from the provided in-memory file map.",
+      "thesis": "The reader must treat path normalization as a safety boundary rather than a convenience feature.",
+      "verification_lane": "AST guard plus bounded adversarial path coverage over normalized in-memory file access."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def run_bounded_sql(query: str, rows: list[dict[str, int]]) -> list[dict[str, int]]:\n    # Define the allowed SQL keywords and operators\n    allowed_keywords = {'SELECT', 'FROM', 'WHERE', 'LIMIT'}\n    allowed_operators = {'=', '!=', '<', '<=', '>', '>='}\n    \n    # Split the query into tokens\n    tokens = query.split()\n    \n    # Check for forbidden keywords and semicolons\n    forbidden_keywords = {'DELETE', 'UPDATE', 'INSERT', 'DROP', 'ALTER', 'CREATE', 'PRAGMA', ';'}\n    if any(keyword in query.upper() for keyword in forbidden_keywords):\n        raise ValueError(\"Forbidden SQL operation detected.\")\n    \n    # Basic structure validation\n    if len(tokens) < 4 or tokens[0].upper() != 'SELECT' or 'FROM' not in tokens:\n        raise ValueError(\"Invalid SQL query structure.\")\n    \n    # Extract columns to select\n    select_index = tokens.index('SELECT') + 1\n    from_index = tokens.index('FROM')\n    columns = tokens[select_index:from_index]\n    if len(columns) == 1 and columns[0] == '*':\n        columns = list(rows[0].keys()) if rows else []\n    else:\n        columns = ''.join(columns).split(',')\n    \n    # Validate columns\n    for column in columns:\n        if column not in rows[0]:\n            raise ValueError(f\"Unknown column: {column}\")\n    \n    # Filter rows based on WHERE clause if present\n    filtered_rows = rows\n    if 'WHERE' in tokens:\n        where_index = tokens.index('WHERE') + 1\n        limit_index = tokens.index('LIMIT') if 'LIMIT' in tokens else len(tokens)\n        condition = tokens[where_index:limit_index]\n        \n        if len(condition) != 3 or condition[1] not in allowed_operators:\n            raise ValueError(\"Invalid WHERE clause.\")\n        \n        where_column, operator, value = condition\n        if where_column not in rows[0]:\n            raise ValueError(f\"Unknown column in WHERE clause: {where_column}\")\n        \n        try:\n            value = int(value)\n        except ValueError:\n            raise ValueError(\"WHERE clause value must be an integer.\")\n        \n        # Apply the WHERE condition\n        if operator == '=':\n            filtered_rows = [row for row in rows if row[where_column] == value]\n        elif operator == '!=':\n            filtered_rows = [row for row in rows if row[where_column] != value]\n        elif operator == '<':\n            filtered_rows = [row for row in rows if row[where_column] < value]\n        elif operator == '<=':\n            filtered_rows = [row for row in rows if row[where_column] <= value]\n        elif operator == '>':\n            filtered_rows = [row for row in rows if row[where_column] > value]\n        elif operator == '>=':\n            filtered_rows = [row for row in rows if row[where_column] >= value]\n    \n    # Apply LIMIT if present\n    if 'LIMIT' in tokens:\n        limit_index = tokens.index('LIMIT') + 1\n        try:\n            limit_value = int(tokens[limit_index])\n        except (IndexError, ValueError):\n            raise ValueError(\"Invalid LIMIT value.\")\n        filtered_rows = filtered_rows[:limit_value]\n    \n    # Select the specified columns\n    result = [{col: row[col] for col in columns} for row in filtered_rows]\n    \n    return result",
+        "metrics": {
+          "passed_cases": 7,
+          "total_cases": 7
+        },
+        "summary": "query runner preserves the SELECT-only grammar on bounded safe and adversarial examples"
+      },
+      "constraints": [
+        "Support only SELECT <columns> FROM rows [WHERE <column> <op> <int>] [LIMIT <int>].",
+        "Reject DELETE, UPDATE, INSERT, DROP, ALTER, CREATE, PRAGMA, semicolons, and unknown columns.",
+        "Treat the input `rows` as the only table."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "run_bounded_sql",
+      "id": "bounded_sql_querier",
+      "iterations": 3,
+      "name": "Bounded SQL Querier",
+      "primary_invariant": "Only a safe SELECT grammar is allowed; mutating SQL or multi-statement queries must be rejected.",
+      "signature": "run_bounded_sql(query: str, rows: list[dict[str, int]]) -> list[dict[str, int]]",
+      "status": "verified",
+      "task": "Execute a tiny SELECT-only SQL fragment over an in-memory table of rows.",
+      "thesis": "A tiny SELECT-only fragment is easier to verify and still useful for agent retrieval.",
+      "verification_lane": "AST guard plus oracle-matched execution over safe and unsafe query fixtures."
+    },
+    {
+      "accepted_attempt": {
+        "code": null,
+        "metrics": {},
+        "summary": "safe request crashed the candidate"
+      },
+      "constraints": [
+        "Reject localhost, private IPs, bare IP hosts, and non-HTTPS schemes.",
+        "Only the GET method is allowed.",
+        "Look up the final response in the provided responses map using the key '<METHOD> <URL>'."
+      ],
+      "evidence_level": "bounded-execution",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "safe_api_call",
+      "id": "safe_api_caller",
+      "iterations": 4,
+      "name": "Safe API Caller",
+      "primary_invariant": "Only HTTPS GET requests to explicitly allowlisted public hosts are permitted.",
+      "signature": "safe_api_call(url: str, method: str, allowlist: list[str], responses: dict[str, str]) -> str",
+      "status": "failed",
+      "task": "Validate an outbound API request against a strict allowlist and return a mocked response body.",
+      "thesis": "The network boundary belongs in the tool contract, not in the model's intentions.",
+      "verification_lane": "URL policy oracle covering scheme, host, IP, and method restrictions."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def append_only_log(existing: str, new_entry: str, max_bytes: int = 4096) -> str:\n    # Check for NUL bytes in the new entry\n    if '\\x00' in new_entry:\n        raise ValueError(\"New entry contains NUL bytes, which are not allowed.\")\n\n    # Determine if a newline is needed between existing and new entry\n    if existing and not existing.endswith('\\n'):\n        new_entry = '\\n' + new_entry\n\n    # Calculate the potential new log size\n    new_log = existing + new_entry\n    new_log_size = len(new_log.encode('utf-8'))\n\n    # Check if the new log size exceeds the maximum allowed bytes\n    if new_log_size > max_bytes:\n        raise ValueError(\"Appending the new entry would exceed the maximum allowed log size.\")\n\n    return new_log",
+        "metrics": {
+          "passed_cases": 5,
+          "total_cases": 5
+        },
+        "summary": "logger preserves prefix monotonicity and bounded growth on bounded adversarial cases"
+      },
+      "constraints": [
+        "Preserve the full previous log exactly as a prefix.",
+        "If the existing log is non-empty and does not end with a newline, insert one before the new entry.",
+        "Reject outputs whose byte length would exceed max_bytes."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Oversized writes and NUL bytes should be rejected.",
+          "payload": {
+            "existing": "",
+            "max_bytes": 64,
+            "new_entry": "abc\u0000def"
+          },
+          "title": "invalid_append_accepted"
+        },
+        "summary": "invalid append request was accepted"
+      },
+      "function_name": "append_only_log",
+      "id": "append_only_logger",
+      "iterations": 2,
+      "name": "Append-Only Logger",
+      "primary_invariant": "The previous log must remain a prefix of the new log; size must never exceed the configured bound.",
+      "signature": "append_only_log(existing: str, new_entry: str, max_bytes: int = 4096) -> str",
+      "status": "verified",
+      "task": "Append a new log entry without mutating existing bytes and enforce a hard output-size cap.",
+      "thesis": "Scratchpad memory is safest when writes become monotonic state transitions.",
+      "verification_lane": "Prefix-preservation checks and bounded byte-budget enforcement."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def mask_pii(text: str) -> str:\n    def mask_email(text):\n        # Simple regex pattern to match emails\n        return re.sub(r'\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,7}\\b', '[EMAIL]', text)\n\n    def mask_phone(text):\n        # Simple regex pattern to match US phone numbers\n        return re.sub(r'\\b(?:\\+1[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b', '[PHONE]', text)\n\n    def mask_ssn(text):\n        # Simple regex pattern to match SSNs\n        return re.sub(r'\\b\\d{3}-\\d{2}-\\d{4}\\b', '[SSN]', text)\n\n    def mask_credit_card(text):\n        # Simple regex pattern to match 16-digit credit card numbers\n        return re.sub(r'\\b(?:\\d{4}[-\\s]?){3}\\d{4}\\b', '[CARD]', text)\n\n    # Apply each mask function in sequence\n    text = mask_email(text)\n    text = mask_phone(text)\n    text = mask_ssn(text)\n    text = mask_credit_card(text)\n\n    return text",
+        "metrics": {
+          "passed_cases": 3,
+          "total_cases": 3
+        },
+        "summary": "masker removes all configured PII classes on bounded fixture coverage"
+      },
+      "constraints": [
+        "Replace matches with stable placeholders rather than deleting all surrounding context.",
+        "Handle multiple PII categories in one string.",
+        "Do not introduce new digits that recreate a banned pattern."
+      ],
+      "evidence_level": "bounded-execution + regex-check",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "mask_pii",
+      "id": "pii_masker",
+      "iterations": 3,
+      "name": "PII Masker",
+      "primary_invariant": "Masked output must not contain emails, US phone numbers, SSNs, or 16-digit card numbers recognized by the repository regex suite.",
+      "signature": "mask_pii(text: str) -> str",
+      "status": "verified",
+      "task": "Redact common PII patterns before text is sent to an LLM.",
+      "thesis": "Sanitization should fail closed on known high-risk PII classes before context leaves the host.",
+      "verification_lane": "Regex-backed fixture suite with stable placeholder expectations."
+    },
+    {
+      "accepted_attempt": {
+        "code": null,
+        "metrics": {},
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "constraints": [
+        "Support integers, variables, parentheses, unary minus, +, -, *, and //.",
+        "Reject function calls, attributes, exponentiation, unknown variables, and expressions with more than max_nodes AST nodes.",
+        "Return the same result as the reference interpreter on bounded inputs."
+      ],
+      "evidence_level": "ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "bounded_evaluate",
+      "id": "compute_bounded_evaluator",
+      "iterations": 4,
+      "name": "Compute-Bounded Evaluator",
+      "primary_invariant": "Only a bounded whitelist of arithmetic AST nodes is allowed, and evaluation must reject unsupported or oversized expressions.",
+      "signature": "bounded_evaluate(expression: str, variables: dict[str, int], max_nodes: int = 32) -> int",
+      "status": "failed",
+      "task": "Evaluate a tiny arithmetic expression language with explicit resource bounds.",
+      "thesis": "If the evaluator language is tiny, the verifier can exhaustively compare semantics on bounded cases.",
+      "verification_lane": "AST whitelist plus bounded arithmetic equivalence against a reference interpreter."
+    }
+  ],
+  "provider": "openai-compatible",
+  "tagline": "CEGIS for synthesizing safe agent tools under explicit environment invariants.",
+  "timeline": [
+    "Specify a micro-scoped tool and its primary invariant.",
+    "Generate a candidate implementation through the synthesis interface.",
+    "Run AST guards and bounded executable verifiers.",
+    "Feed the counterexample back into the next generation attempt.",
+    "Accept only the first candidate that satisfies the bounded verifier suite."
+  ],
+  "title": "VeriTool"
+}

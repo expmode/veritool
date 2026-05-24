@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VeriTool Trajectories</title>
+    <meta
+      name="description"
+      content="Explore the live prompt, counterexample, and response trajectories for every VeriTool model run."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <canvas class="graph-background" id="graph-background" aria-hidden="true"></canvas>
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="./index.html">VeriTool</a>
+        <nav class="nav">
+          <a href="./index.html#idea">Idea</a>
+          <a href="./index.html#results">Results</a>
+          <a href="./trajectories.html">Trajectories</a>
+          <a href="./leaderboard.html">Leaderboard</a>
+          <a href="./index.html#vision">Vision</a>
+          <a href="./index.html#limits">Limits</a>
+        </nav>
+      </header>
+
+      <main>
+        <section class="hero trajectory-hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Live Prompt Archive / Multi-Model</p>
+            <h1>Inspect every prompt, counterexample, and response across the live runs.</h1>
+            <p class="lede">
+              Select a model and inspect the exact repair loop: prompt, verifier counterexample, raw completion, and the final
+              accepted code when convergence happened.
+            </p>
+          </div>
+
+          <aside class="hero-panel">
+            <p class="panel-kicker">Trajectory explorer</p>
+            <div class="model-picker" id="model-picker" aria-label="Model selector"></div>
+            <div class="stat-grid" id="trajectory-stats">
+              <div class="stat-card">
+                <span>Loading</span>
+                <strong>...</strong>
+              </div>
+            </div>
+            <p class="panel-note">
+              Every trajectory shown here is sourced from a recorded live run rather than a replay fixture. A tool passes only if one
+              of its first 4 candidates clears the verifier.
+            </p>
+          </aside>
+        </section>
+
+        <section class="section">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Explorer</p>
+              <h2>Tool-by-tool trajectories</h2>
+            </div>
+            <p class="section-copy">
+              Pick a model and tool to see where the loop corrected itself, where it repeated a mistake, and where the budget ran out.
+            </p>
+          </div>
+
+          <div class="trajectory-layout">
+            <aside class="trajectory-sidebar" id="tool-list" aria-label="Tool trajectories"></aside>
+            <section class="trajectory-main" id="trajectory-detail" aria-live="polite"></section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./graph-background.js"></script>
+    <script src="./trajectories.js"></script>
+  </body>
+</html>

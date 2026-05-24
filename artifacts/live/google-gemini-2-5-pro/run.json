@@ -1,0 +1,422 @@
+{
+  "aggregate_metrics": {
+    "average_iterations": 3.67,
+    "failed_tools": 4,
+    "passed_tools": 2,
+    "success_rate": 0.333,
+    "tool_count": 6,
+    "total_iterations": 22
+  },
+  "finished_at": "2026-05-24T22:28:11+00:00",
+  "provider": "openai-compatible",
+  "started_at": "2026-05-24T21:58:58+00:00",
+  "suite_name": "VeriTool Full Suite",
+  "tools": [
+    {
+      "accepted_code": null,
+      "accepted_metrics": {},
+      "evidence_level": "ast-guard",
+      "iterations": 4,
+      "passed": false,
+      "provider": "openai-compatible",
+      "replay_source": null,
+      "tool_id": "local_context_reader",
+      "tool_name": "Local Context Reader",
+      "traces": [
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 1,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "Candidate referenced a module or capability that is outside the safe micro-tool model.",
+            "payload": {
+              "term": "os."
+            },
+            "title": "forbidden_capability"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 2,
+          "metrics": {},
+          "passed": false,
+          "summary": "forbidden capability reference detected: os."
+        },
+        {
+          "counterexample": {
+            "description": "A valid path should not crash the synthesized reader.",
+            "payload": {
+              "error": "File not found at the requested path: ch1.txt",
+              "requested_path": "ch1.txt"
+            },
+            "title": "reader_exception"
+          },
+          "evidence_level": "bounded-execution",
+          "iteration": 3,
+          "metrics": {
+            "passed_cases": 0,
+            "total_cases": 7
+          },
+          "passed": false,
+          "summary": "reader crashed on a valid safe path"
+        },
+        {
+          "counterexample": {
+            "description": "Candidate referenced a module or capability that is outside the safe micro-tool model.",
+            "payload": {
+              "term": "os."
+            },
+            "title": "forbidden_capability"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 4,
+          "metrics": {},
+          "passed": false,
+          "summary": "forbidden capability reference detected: os."
+        }
+      ]
+    },
+    {
+      "accepted_code": "def _evaluate_where_op(row_val: int, op: str, condition_val: int) -> bool:\n    \"\"\"Helper to evaluate a single WHERE clause operation.\"\"\"\n    if op == '=':\n        return row_val == condition_val\n    if op == '!=':\n        return row_val != condition_val\n    if op == '>':\n        return row_val > condition_val\n    if op == '<':\n        return row_val < condition_val\n    if op == '>=':\n        return row_val >= condition_val\n    if op == '<=':\n        return row_val <= condition_val\n    return False  # Should be unreachable due to prior validation\n\ndef run_bounded_sql(query: str, rows: list[dict[str, int]]) -> list[dict[str, int]]:\n    \"\"\"\n    Execute a tiny SELECT-only SQL fragment over an in-memory table of rows.\n    \"\"\"\n    # 1. PRE-VALIDATION AND SETUP\n    lower_query = query.lower()\n    forbidden_keywords = [\n        'insert', 'update', 'delete', 'drop', 'create', 'alter', 'pragma'\n    ]\n    query_words = lower_query.split()\n    if any(keyword in query_words for keyword in forbidden_keywords):\n        raise ValueError(\"Mutating SQL statements are not allowed.\")\n    if ';' in query:\n        raise ValueError(\"Multi-statement queries are not allowed.\")\n\n    all_columns = set(rows[0].keys()) if rows else set()\n\n    # 2. PARSING\n    q = query.strip()\n    lower_q = q.lower()\n\n    if not lower_q.startswith('select '):\n        raise ValueError(\"Query must start with 'select '.\")\n\n    # Find clause boundaries using find() to be robust against spacing issues\n    from_pos = lower_q.find(' from ')\n    where_pos = lower_q.find(' where ')\n    limit_pos = lower_q.find(' limit ')\n\n    if from_pos == -1:\n        raise ValueError(\"Missing 'from' clause.\")\n\n    # Validate clause order\n    if where_pos != -1 and where_pos < from_pos:\n        raise ValueError(\"'where' clause must appear after 'from'.\")\n    if limit_pos != -1 and limit_pos < from_pos:\n        raise ValueError(\"'limit' clause must appear after 'from'.\")\n    if where_pos != -1 and limit_pos != -1 and limit_pos < where_pos:\n        raise ValueError(\"'limit' clause must appear after 'where'.\")\n\n    # Determine clause content boundaries\n    select_end = from_pos\n    from_end = where_pos if where_pos != -1 else (limit_pos if limit_pos != -1 else len(q))\n    where_end = limit_pos if limit_pos != -1 else len(q)\n\n    # Parse FROM clause\n    from_table_str = q[from_pos + len(' from '):from_end].strip()\n    if from_table_str.lower() != 'rows':\n        raise ValueError(\"Can only select from the table named 'rows'.\")\n\n    # Parse SELECT clause\n    select_cols_str = q[len('select '):select_end].strip()\n    is_select_all = False\n    if select_cols_str == '*':\n        is_select_all = True\n        selected_columns = sorted(list(all_columns))\n    else:\n        selected_columns = [c.strip() for c in select_cols_str.split(',')]\n        if not selected_columns or any(not c for c in selected_columns):\n            raise ValueError(\"Invalid column list in select clause.\")\n        for col in selected_columns:\n            if col not in all_columns:\n                raise ValueError(f\"Unknown column '{col}' in select list.\")\n\n    # Parse WHERE clause\n    where_clause = None\n    if where_pos != -1:\n        where_str = q[where_pos + len(' where '):where_end].strip()\n        parts = where_str.split()\n        if len(parts) != 3:\n            raise ValueError(\"Invalid 'where' clause format. Expected '<column> <op> <integer>'.\")\n        \n        col, op, val_str = parts\n        if col not in all_columns:\n            raise ValueError(f\"Unknown column '{col}' in 'where' clause.\")\n        \n        allowed_ops = ['=', '!=', '>', '<', '>=', '<=']\n        if op not in allowed_ops:\n            raise ValueError(f\"Unsupported operator '{op}' in 'where' clause.\")\n            \n        try:\n            val = int(val_str)\n        except ValueError:\n            raise ValueError(f\"'where' clause value must be an integer, but got '{val_str}'.\")\n        \n        where_clause = (col, op, val)\n\n    # Parse LIMIT clause\n    limit_val = None\n    if limit_pos != -1:\n        limit_str = q[limit_pos + len(' limit '):].strip()\n        try:\n            limit_val = int(limit_str)\n            if limit_val < 0:\n                raise ValueError(\"Limit value cannot be negative.\")\n        except ValueError:\n            raise ValueError(f\"Limit value must be an integer, but got '{limit_str}'.\")\n\n    # 3. EXECUTION\n    if not rows:\n        return []\n\n    # Stage 1: Filtering (WHERE)\n    if where_clause:\n        w_col, w_op, w_val = where_clause\n        current_rows = [row for row in rows if w_col in row and _evaluate_where_op(row[w_col], w_op, w_val)]\n    else:\n        current_rows = list(rows)\n\n    # Stage 2: Limiting (LIMIT)\n    if limit_val is not None:\n        current_rows = current_rows[:limit_val]\n\n    # Stage 3: Projection (SELECT) - returns copies to prevent mutation\n    if is_select_all:\n        result = [row.copy() for row in current_rows]\n    else:\n        result = [{col: row[col] for col in selected_columns} for row in current_rows]\n\n    return result",
+      "accepted_metrics": {
+        "passed_cases": 7,
+        "total_cases": 7
+      },
+      "evidence_level": "bounded-execution + ast-guard",
+      "iterations": 3,
+      "passed": true,
+      "provider": "openai-compatible",
+      "replay_source": null,
+      "tool_id": "bounded_sql_querier",
+      "tool_name": "Bounded SQL Querier",
+      "traces": [
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 1,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "The candidate could not be parsed as Python.",
+            "payload": {
+              "line": 6,
+              "message": "unterminated string literal (detected at line 6)",
+              "offset": 2
+            },
+            "title": "syntax_error"
+          },
+          "evidence_level": "syntax",
+          "iteration": 2,
+          "metrics": {},
+          "passed": false,
+          "summary": "candidate code did not parse: unterminated string literal (detected at line 6)"
+        },
+        {
+          "counterexample": null,
+          "evidence_level": "bounded-execution + ast-guard",
+          "iteration": 3,
+          "metrics": {
+            "passed_cases": 7,
+            "total_cases": 7
+          },
+          "passed": true,
+          "summary": "query runner preserves the SELECT-only grammar on bounded safe and adversarial examples"
+        }
+      ]
+    },
+    {
+      "accepted_code": null,
+      "accepted_metrics": {},
+      "evidence_level": "ast-guard",
+      "iterations": 4,
+      "passed": false,
+      "provider": "openai-compatible",
+      "replay_source": null,
+      "tool_id": "safe_api_caller",
+      "tool_name": "Safe API Caller",
+      "traces": [
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 1,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "The candidate could not be parsed as Python.",
+            "payload": {
+              "line": 14,
+              "message": "unterminated string literal (detected at line 14)",
+              "offset": 2
+            },
+            "title": "syntax_error"
+          },
+          "evidence_level": "syntax",
+          "iteration": 2,
+          "metrics": {},
+          "passed": false,
+          "summary": "candidate code did not parse: unterminated string literal (detected at line 14)"
+        },
+        {
+          "counterexample": {
+            "description": "Candidate referenced a module or capability that is outside the safe micro-tool model.",
+            "payload": {
+              "term": "requests"
+            },
+            "title": "forbidden_capability"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 3,
+          "metrics": {},
+          "passed": false,
+          "summary": "forbidden capability reference detected: requests"
+        },
+        {
+          "counterexample": {
+            "description": "Candidate referenced a module or capability that is outside the safe micro-tool model.",
+            "payload": {
+              "term": "requests"
+            },
+            "title": "forbidden_capability"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 4,
+          "metrics": {},
+          "passed": false,
+          "summary": "forbidden capability reference detected: requests"
+        }
+      ]
+    },
+    {
+      "accepted_code": "def append_only_log(existing: str, new_entry: str, max_bytes: int = 4096) -> str:\n    \"\"\"\n    Append a new log entry without mutating existing bytes and enforce a hard output-size cap.\n    \"\"\"\n    # Reject new entries containing NUL bytes, as they can cause issues.\n    if '\\x00' in new_entry:\n        raise ValueError(\"New entry cannot contain NUL bytes.\")\n\n    # Determine the separator: add a newline if the existing log is not empty\n    # and does not already end with one.\n    separator = \"\"\n    if existing and not existing.endswith('\\n'):\n        separator = '\\n'\n\n    # Construct the potential new log string. This ensures the primary invariant\n    # that the previous log remains a prefix.\n    new_log = existing + separator + new_entry\n\n    # Check the size limit against the byte representation of the string.\n    # We use UTF-8 as a standard and safe encoding choice.\n    if len(new_log.encode('utf-8')) > max_bytes:\n        raise ValueError(\n            f\"Appending new entry would exceed max_bytes of {max_bytes}.\"\n        )\n\n    return new_log",
+      "accepted_metrics": {
+        "passed_cases": 5,
+        "total_cases": 5
+      },
+      "evidence_level": "bounded-execution + ast-guard",
+      "iterations": 3,
+      "passed": true,
+      "provider": "openai-compatible",
+      "replay_source": null,
+      "tool_id": "append_only_logger",
+      "tool_name": "Append-Only Logger",
+      "traces": [
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 1,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "Oversized writes and NUL bytes should be rejected.",
+            "payload": {
+              "existing": "seed",
+              "max_bytes": 16,
+              "new_entry": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            },
+            "title": "invalid_append_accepted"
+          },
+          "evidence_level": "bounded-execution",
+          "iteration": 2,
+          "metrics": {
+            "passed_cases": 3,
+            "total_cases": 5
+          },
+          "passed": false,
+          "summary": "invalid append request was accepted"
+        },
+        {
+          "counterexample": null,
+          "evidence_level": "bounded-execution + ast-guard",
+          "iteration": 3,
+          "metrics": {
+            "passed_cases": 5,
+            "total_cases": 5
+          },
+          "passed": true,
+          "summary": "logger preserves prefix monotonicity and bounded growth on bounded adversarial cases"
+        }
+      ]
+    },
+    {
+      "accepted_code": null,
+      "accepted_metrics": {},
+      "evidence_level": "syntax",
+      "iterations": 4,
+      "passed": false,
+      "provider": "openai-compatible",
+      "replay_source": null,
+      "tool_id": "pii_masker",
+      "tool_name": "PII Masker",
+      "traces": [
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 1,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "The masker should preserve context while replacing the matched PII token with the expected placeholder.",
+            "payload": {
+              "actual": "Alice [EMAIL] called [PHONE] with card [CREDIT_CARD].",
+              "expected": "Alice [EMAIL] called [PHONE] with card [CARD].",
+              "text": "Alice alice@example.com called 555-123-4567 with card 4111-1111-1111-1111."
+            },
+            "title": "masking_mismatch"
+          },
+          "evidence_level": "bounded-execution",
+          "iteration": 2,
+          "metrics": {
+            "passed_cases": 0,
+            "total_cases": 3
+          },
+          "passed": false,
+          "summary": "masker did not produce the expected stable redaction"
+        },
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 3,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "The candidate could not be parsed as Python.",
+            "payload": {
+              "line": 6,
+              "message": "unterminated string literal (detected at line 6)",
+              "offset": 2
+            },
+            "title": "syntax_error"
+          },
+          "evidence_level": "syntax",
+          "iteration": 4,
+          "metrics": {},
+          "passed": false,
+          "summary": "candidate code did not parse: unterminated string literal (detected at line 6)"
+        }
+      ]
+    },
+    {
+      "accepted_code": null,
+      "accepted_metrics": {},
+      "evidence_level": "ast-guard",
+      "iterations": 4,
+      "passed": false,
+      "provider": "openai-compatible",
+      "replay_source": null,
+      "tool_id": "compute_bounded_evaluator",
+      "tool_name": "Compute-Bounded Evaluator",
+      "traces": [
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 1,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 2,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 3,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        },
+        {
+          "counterexample": {
+            "description": "Candidates must stay within the provided runtime and cannot import modules.",
+            "payload": {
+              "node_type": "Import"
+            },
+            "title": "forbidden_import"
+          },
+          "evidence_level": "ast-guard",
+          "iteration": 4,
+          "metrics": {},
+          "passed": false,
+          "summary": "imports are not allowed in candidate tools"
+        }
+      ]
+    }
+  ]
+}

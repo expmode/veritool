@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VeriTool</title>
+    <meta
+      name="description"
+      content="VeriTool is a counterexample-guided system for synthesizing safer agent tools under explicit safety invariants."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <canvas class="graph-background" id="graph-background" aria-hidden="true"></canvas>
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="#top">VeriTool</a>
+        <nav class="nav">
+          <a href="#idea">Idea</a>
+          <a href="#results">Results</a>
+          <a href="./trajectories.html">Trajectories</a>
+          <a href="./leaderboard.html">Leaderboard</a>
+          <a href="#vision">Vision</a>
+          <a href="#limits">Limits</a>
+        </nav>
+      </header>
+
+      <main id="top">
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Secure Program Synthesis / Vericoding</p>
+            <h1>Do not trust the agent. Verify the environment it acts through.</h1>
+            <p class="lede">
+              VeriTool is a counterexample-guided synthesis pipeline for building narrowly scoped agent tools with explicit safety
+              invariants. Instead of asking whether a model is aligned, we ask whether each capability it receives is constrained,
+              inspectable, and verifier-approved.
+            </p>
+            <div class="hero-actions">
+              <a class="button primary" href="#results">See live results</a>
+              <a class="button secondary" href="#vision">See the vision</a>
+            </div>
+          </div>
+
+          <aside class="hero-panel">
+            <p class="panel-kicker">Completed live runs</p>
+            <div class="stat-grid">
+              <div class="stat-card">
+                <span>Completed models</span>
+                <strong>4</strong>
+              </div>
+              <div class="stat-card">
+                <span>Total passes</span>
+                <strong>15 / 24</strong>
+              </div>
+              <div class="stat-card">
+                <span>Best score</span>
+                <strong>5 / 6</strong>
+              </div>
+              <div class="stat-card">
+                <span>Mean iterations / tool</span>
+                <strong>3.33</strong>
+              </div>
+            </div>
+            <p class="panel-note">
+              Across the four completed runs, the benchmark separates models that can repair verifier feedback quickly from models
+              that keep repeating AST or policy mistakes until the budget is gone.
+            </p>
+          </aside>
+        </section>
+
+        <section class="section two-column" id="idea">
+          <div>
+            <p class="section-kicker">Core Idea</p>
+            <h2>From model alignment to capability verification</h2>
+          </div>
+          <div class="body-copy">
+            <p>
+              Recursive language models and autonomous coding agents become dangerous when they inherit broad REPL access to the
+              filesystem, network, databases, and arbitrary computation. VeriTool inverts the framing: rather than proving the
+              agent&apos;s reasoning is safe, it synthesizes the environment interfaces the agent can use and rejects unsafe tool
+              implementations with concrete counterexamples.
+            </p>
+            <p>
+              The loop is deliberately simple and legible: write a formal safety invariant, generate a candidate tool with the LLM,
+              verify it under bounded checks and policy guards, then feed the counterexample back into the next iteration.
+            </p>
+          </div>
+        </section>
+
+        <section class="section" id="rlm-map">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Where VeriTool Fits</p>
+              <h2>RLMs become safer when tool access flows through a verified boundary</h2>
+            </div>
+            <p class="section-copy">
+              The key intervention is not inside the model weights. VeriTool sits between the RLM and the external capabilities it
+              wants to use, turning raw tool access into a constrained synthesis-and-verification gate.
+            </p>
+          </div>
+
+          <div class="diagram-grid">
+            <article class="diagram-card">
+              <p class="diagram-kicker">Without VeriTool</p>
+              <h3>RLM with direct tool access</h3>
+
+              <div class="stack-box agent">
+                <span class="stack-label">Context + task</span>
+                <strong>Recursive Language Model</strong>
+                <p>Plans, reasons, and decides when to call tools.</p>
+              </div>
+
+              <div class="down-arrow" aria-hidden="true">↓</div>
+
+              <div class="stack-box tools danger">
+                <span class="stack-label">Direct access layer</span>
+                <strong>Filesystem / DB / Network / Compute</strong>
+                <p>Broad capability surface, difficult to reason about, easy to misuse.</p>
+              </div>
+
+              <div class="risk-strip">
+                <span>Risk surface</span>
+                <p>Unsafe reads, unsafe writes, unsafe queries, unsafe outbound calls.</p>
+              </div>
+            </article>
+
+            <article class="diagram-card highlighted">
+              <p class="diagram-kicker">With VeriTool</p>
+              <h3>RLM routed through a verified tool gateway</h3>
+
+              <div class="stack-box agent">
+                <span class="stack-label">Context + task</span>
+                <strong>Recursive Language Model</strong>
+                <p>Requests a capability instead of getting unconstrained tool access.</p>
+              </div>
+
+              <div class="down-arrow" aria-hidden="true">↓</div>
+
+              <div class="gateway-shell">
+                <div class="gateway-box">
+                  <span class="stack-label">VeriTool boundary</span>
+                  <strong>Spec → Generate → Verify → Counterexample</strong>
+                  <p>Synthesizes a narrow tool and admits it only if the invariant holds under bounded checks.</p>
+                </div>
+
+                <div class="gateway-rail" aria-hidden="true"></div>
+
+                <div class="gateway-tools">
+                  <div class="mini-tool">Safe reader</div>
+                  <div class="mini-tool">Safe SQL</div>
+                  <div class="mini-tool">Safe API</div>
+                  <div class="mini-tool">Safe eval</div>
+                </div>
+              </div>
+
+              <div class="risk-strip safer">
+                <span>Effect</span>
+                <p>The RLM can still act, but only through approved tools with explicit safety invariants.</p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="loop-title">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Vericoding Loop</p>
+              <h2 id="loop-title">One shared synthesis loop, six safety lanes</h2>
+            </div>
+          </div>
+          <div class="timeline">
+            <article class="timeline-step">
+              <span>01</span>
+              <h3>Specification</h3>
+              <p>Write a narrow tool contract and formal invariant.</p>
+            </article>
+            <article class="timeline-step">
+              <span>02</span>
+              <h3>Generation</h3>
+              <p>Prompt the LLM to produce candidate Python code for the tool.</p>
+            </article>
+            <article class="timeline-step">
+              <span>03</span>
+              <h3>Verification</h3>
+              <p>Run AST guards, policy checks, and bounded executable verifiers.</p>
+            </article>
+            <article class="timeline-step">
+              <span>04</span>
+              <h3>Feedback</h3>
+              <p>Inject the concrete counterexample into the next generation step.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="results">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Completed Runs</p>
+              <h2>Live benchmark results across finished models</h2>
+            </div>
+            <p class="section-copy">
+              This view summarizes the completed live runs for `claude-sonnet-4`, `gpt-4o`, `deepseek-v3.2-exp`, and
+              `gemini-2.5-pro`. Every model was evaluated on the same six-tool suite with the same four-iteration budget per tool.
+            </p>
+          </div>
+
+          <div class="benchmark-note">
+            <p class="benchmark-note-kicker">How to read pass / fail</p>
+            <p>
+              Each tool gets at most <strong>4 generation attempts</strong>. After every attempt, VeriTool runs the verifier. A
+              tool is marked <strong>pass</strong> if any candidate satisfies the full safety and behavioral spec within that budget.
+              It is marked <strong>fail</strong> if no verifier-approved candidate is found before the 4-call limit is exhausted.
+            </p>
+          </div>
+
+          <div class="results-band">
+            <div class="results-copy">
+              <p>
+                The aggregate view makes the comparison legible: some models converge reliably on most tool families, while others
+                burn through the budget on verifier violations or fail to repair the right counterexample in time.
+              </p>
+            </div>
+            <div class="results-callout">
+              <span>Aggregate pass rate</span>
+              <strong>62.5%</strong>
+            </div>
+          </div>
+
+          <div class="tool-grid">
+            <article class="tool-card success">
+              <div class="tool-head">
+                <h3>Claude Sonnet 4</h3>
+                <span>5 / 6</span>
+              </div>
+              <p>Best completed run so far, finishing with five verified tools in 17 total iterations.</p>
+            </article>
+
+            <article class="tool-card success">
+              <div class="tool-head">
+                <h3>GPT-4o</h3>
+                <span>4 / 6</span>
+              </div>
+              <p>Middle of the pack: four verified tools, with failures concentrated in API safety and bounded evaluation.</p>
+            </article>
+
+            <article class="tool-card success">
+              <div class="tool-head">
+                <h3>DeepSeek V3.2 Exp</h3>
+                <span>4 / 6</span>
+              </div>
+              <p>Also reached four verified tools, but with a different profile: it solved API calling and bounded evaluation.</p>
+            </article>
+
+            <article class="tool-card failure">
+              <div class="tool-head">
+                <h3>Gemini 2.5 Pro</h3>
+                <span>2 / 6</span>
+              </div>
+              <p>Completed, but converged on only two tools before exhausting the verifier budget on the rest.</p>
+            </article>
+          </div>
+
+          <div class="benchmark-note">
+            <p class="benchmark-note-kicker">What the benchmark reveals</p>
+            <p>
+              The easy lanes are bounded logging, local file reads, and small SQL fragments once the model internalizes the guardrail.
+              The hard lanes are outbound API policy enforcement and tiny arithmetic evaluators, where small structural mistakes keep
+              triggering the verifier.
+            </p>
+          </div>
+
+          <div class="evidence-links">
+            <a href="./trajectories.html">Explore live trajectories</a>
+            <a href="./leaderboard.html">Compare model leaderboard</a>
+            <a href="../docs/results.md">Open results note</a>
+            <a href="../docs/report-draft.md">Open report draft</a>
+          </div>
+        </section>
+
+        <section class="section" id="vision">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Long-Term Vision</p>
+              <h2>Runtime tool synthesis for adaptive but bounded agents</h2>
+            </div>
+          </div>
+
+          <div class="vision-grid">
+            <article class="vision-card">
+              <span>Intent recognition</span>
+              <p>An agent encounters a new API, schema, or file format and proposes a tool it wishes it had.</p>
+            </article>
+            <article class="vision-card">
+              <span>Global invariants</span>
+              <p>The system applies universal rules like no arbitrary network calls, no raw disk writes, and no unsafe escalation.</p>
+            </article>
+            <article class="vision-card">
+              <span>On-the-fly verification</span>
+              <p>The CEGIS loop synthesizes and rejects candidates until it finds a bounded-safe interface.</p>
+            </article>
+            <article class="vision-card">
+              <span>Dynamic integration</span>
+              <p>Only the verified tool is injected back into the agent environment for immediate use.</p>
+            </article>
+          </div>
+
+          <blockquote class="vision-quote">
+            The destination is not a static “safe tool belt.” It is a runtime compiler for agent capabilities that expands what the
+            system can do without relaxing the environment boundaries that keep it safe.
+          </blockquote>
+        </section>
+
+        <section class="section two-column" id="limits">
+          <div>
+            <p class="section-kicker">Limits and Honesty</p>
+            <h2>What this does not claim</h2>
+          </div>
+          <div class="body-copy">
+            <p>
+              VeriTool is not a universal proof system for arbitrary Python. The current evidence is bounded and tool-specific,
+              combining AST restrictions, policy checks, regex guards, and executable reference oracles.
+            </p>
+            <p>
+              The completed runs span outcomes from 2 of 6 to 5 of 6 tools. That spread is the useful result: the mechanism is strong
+              enough to expose real differences in repair behavior, but still narrow enough that failures remain concrete and
+              diagnosable.
+            </p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./graph-background.js"></script>
+  </body>
+</html>

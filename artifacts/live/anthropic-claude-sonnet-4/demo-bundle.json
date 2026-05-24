@@ -1,0 +1,237 @@
+{
+  "aggregate_metrics": {
+    "average_iterations": 2.83,
+    "failed_tools": 1,
+    "passed_tools": 5,
+    "success_rate": 0.833,
+    "tool_count": 6,
+    "total_iterations": 17
+  },
+  "casefiles": [
+    {
+      "accepted_attempt": {
+        "code": "def read_local_context(base_dir: str, requested_path: str, file_map: dict[str, str]) -> str:\n    # Reject absolute paths\n    if requested_path.startswith('/') or (len(requested_path) > 1 and requested_path[1] == ':'):\n        raise ValueError(\"Absolute paths are not allowed\")\n    \n    # Normalize the path by resolving .. and . components\n    normalized_path = normalize_path(requested_path)\n    \n    # Check if normalized path tries to escape base directory\n    if normalized_path.startswith('../') or normalized_path == '..':\n        raise ValueError(\"Path traversal outside base directory is not allowed\")\n    \n    # Check if file ends with .txt\n    if not normalized_path.endswith('.txt'):\n        raise ValueError(\"Only .txt files are allowed\")\n    \n    # Construct full path within base directory\n    full_path = base_dir.rstrip('/') + '/' + normalized_path\n    \n    # Read from file_map\n    if full_path not in file_map:\n        raise ValueError(f\"File not found: {requested_path}\")\n    \n    return file_map[full_path]\n\ndef normalize_path(path: str) -> str:\n    \"\"\"Normalize a relative path by resolving . and .. components\"\"\"\n    if not path:\n        return \"\"\n    \n    # Split path into components\n    components = path.split('/')\n    normalized = []\n    \n    for component in components:\n        if component == '' or component == '.':\n            # Skip empty components and current directory references\n            continue\n        elif component == '..':\n            # Go up one directory if possible\n            if normalized:\n                normalized.pop()\n        else:\n            # Regular directory/file name\n            normalized.append(component)\n    \n    return '/'.join(normalized)",
+        "metrics": {
+          "passed_cases": 7,
+          "total_cases": 7
+        },
+        "summary": "reader enforces normalized safe-path and extension invariants on bounded adversarial cases"
+      },
+      "constraints": [
+        "Reject absolute paths and any normalized path outside the base directory.",
+        "Reject files whose normalized path does not end in .txt.",
+        "Do not touch the real filesystem; use only the provided file_map."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "read_local_context",
+      "id": "local_context_reader",
+      "iterations": 3,
+      "name": "Local Context Reader",
+      "primary_invariant": "A request may only read `.txt` files that remain inside the declared safe base directory after normalization.",
+      "signature": "read_local_context(base_dir: str, requested_path: str, file_map: dict[str, str]) -> str",
+      "status": "verified",
+      "task": "Normalize a user-requested relative path, reject traversal or non-.txt access, and read the content from the provided in-memory file map.",
+      "thesis": "The reader must treat path normalization as a safety boundary rather than a convenience feature.",
+      "verification_lane": "AST guard plus bounded adversarial path coverage over normalized in-memory file access."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def run_bounded_sql(query: str, rows: list[dict[str, int]]) -> list[dict[str, int]]:\n    def tokenize(query):\n        tokens = []\n        i = 0\n        while i < len(query):\n            if query[i].isspace():\n                i += 1\n            elif query[i].isalpha() or query[i] == '_':\n                start = i\n                while i < len(query) and (query[i].isalnum() or query[i] == '_'):\n                    i += 1\n                tokens.append(query[start:i])\n            elif query[i].isdigit():\n                start = i\n                while i < len(query) and query[i].isdigit():\n                    i += 1\n                tokens.append(int(query[start:i]))\n            elif query[i] in '=<>!':\n                start = i\n                if i + 1 < len(query) and query[i:i+2] in ['<=', '>=', '!=', '<>']:\n                    tokens.append(query[i:i+2])\n                    i += 2\n                else:\n                    tokens.append(query[i])\n                    i += 1\n            elif query[i] == '*':\n                tokens.append('*')\n                i += 1\n            elif query[i] == ',':\n                tokens.append(',')\n                i += 1\n            elif query[i] == ';':\n                raise ValueError(\"Semicolons not allowed\")\n            else:\n                i += 1\n        return tokens\n    \n    def parse_query(tokens):\n        if not tokens or tokens[0].upper() != 'SELECT':\n            raise ValueError(\"Only SELECT queries allowed\")\n        \n        i = 1\n        \n        # Parse columns\n        if i >= len(tokens):\n            raise ValueError(\"Invalid query\")\n        \n        columns = []\n        if tokens[i] == '*':\n            columns = ['*']\n            i += 1\n        else:\n            while i < len(tokens):\n                if isinstance(tokens[i], str) and tokens[i].isalpha():\n                    columns.append(tokens[i])\n                    i += 1\n                    if i < len(tokens) and tokens[i] == ',':\n                        i += 1\n                    else:\n                        break\n                else:\n                    break\n        \n        if not columns:\n            raise ValueError(\"No columns specified\")\n        \n        # Parse FROM\n        if i >= len(tokens) or tokens[i].upper() != 'FROM':\n            raise ValueError(\"FROM clause required\")\n        i += 1\n        \n        if i >= len(tokens) or tokens[i].upper() != 'ROWS':\n            raise ValueError(\"Only 'rows' table allowed\")\n        i += 1\n        \n        # Parse WHERE (optional)\n        where_clause = None\n        if i < len(tokens) and tokens[i].upper() == 'WHERE':\n            i += 1\n            if i + 2 >= len(tokens):\n                raise ValueError(\"Invalid WHERE clause\")\n            \n            column = tokens[i]\n            operator = tokens[i + 1]\n            value = tokens[i + 2]\n            \n            if not isinstance(column, str) or not isinstance(value, int):\n                raise ValueError(\"Invalid WHERE clause\")\n            \n            if operator not in ['=', '<', '>', '<=', '>=', '!=', '<>']:\n                raise ValueError(\"Invalid operator\")\n            \n            where_clause = (column, operator, value)\n            i += 3\n        \n        # Parse LIMIT (optional)\n        limit = None\n        if i < len(tokens) and tokens[i].upper() == 'LIMIT':\n            i += 1\n            if i >= len(tokens) or not isinstance(tokens[i], int):\n                raise ValueError(\"Invalid LIMIT clause\")\n            limit = tokens[i]\n            i += 1\n        \n        if i < len(tokens):\n            raise ValueError(\"Unexpected tokens at end of query\")\n        \n        return columns, where_clause, limit\n    \n    def check_forbidden_keywords(tokens):\n        forbidden = {'DELETE', 'UPDATE', 'INSERT', 'DROP', 'ALTER', 'CREATE', 'PRAGMA'}\n        for token in tokens:\n            if isinstance(token, str) and token.upper() in forbidden:\n                raise ValueError(f\"Forbidden keyword: {token}\")\n    \n    def apply_where(rows, where_clause):\n        if not where_clause:\n            return rows\n        \n        column, operator, value = where_clause\n        \n        if not rows or column not in rows[0]:\n            raise ValueError(f\"Unknown column: {column}\")\n        \n        result = []\n        for row in rows:\n            row_value = row[column]\n            \n            if operator == '=':\n                match = row_value == value\n            elif operator == '<':\n                match = row_value < value\n            elif operator == '>':\n                match = row_value > value\n            elif operator == '<=':\n                match = row_value <= value\n            elif operator == '>=':\n                match = row_value >= value\n            elif operator in ['!=', '<>']:\n                match = row_value != value\n            else:\n                match = False\n            \n            if match:\n                result.append(row)\n        \n        return result\n    \n    def select_columns(rows, columns):\n        if not rows:\n            return []\n        \n        if columns == ['*']:\n            return rows\n        \n        # Check all columns exist\n        available_columns = set(rows[0].keys())\n        for col in columns:\n            if col not in available_columns:\n                raise ValueError(f\"Unknown column: {col}\")\n        \n        result = []\n        for row in rows:\n            new_row = {col: row[col] for col in columns}\n            result.append(new_row)\n        \n        return result\n    \n    def apply_limit(rows, limit):\n        if limit is None:\n            return rows\n        return rows[:limit]\n    \n    # Main execution\n    tokens = tokenize(query)\n    check_forbidden_keywords(tokens)\n    columns, where_clause, limit = parse_query(tokens)\n    \n    filtered_rows = apply_where(rows, where_clause)\n    selected_rows = select_columns(filtered_rows, columns)\n    limited_rows = apply_limit(selected_rows, limit)\n    \n    return limited_rows",
+        "metrics": {
+          "passed_cases": 7,
+          "total_cases": 7
+        },
+        "summary": "query runner preserves the SELECT-only grammar on bounded safe and adversarial examples"
+      },
+      "constraints": [
+        "Support only SELECT <columns> FROM rows [WHERE <column> <op> <int>] [LIMIT <int>].",
+        "Reject DELETE, UPDATE, INSERT, DROP, ALTER, CREATE, PRAGMA, semicolons, and unknown columns.",
+        "Treat the input `rows` as the only table."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "run_bounded_sql",
+      "id": "bounded_sql_querier",
+      "iterations": 2,
+      "name": "Bounded SQL Querier",
+      "primary_invariant": "Only a safe SELECT grammar is allowed; mutating SQL or multi-statement queries must be rejected.",
+      "signature": "run_bounded_sql(query: str, rows: list[dict[str, int]]) -> list[dict[str, int]]",
+      "status": "verified",
+      "task": "Execute a tiny SELECT-only SQL fragment over an in-memory table of rows.",
+      "thesis": "A tiny SELECT-only fragment is easier to verify and still useful for agent retrieval.",
+      "verification_lane": "AST guard plus oracle-matched execution over safe and unsafe query fixtures."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def safe_api_call(url: str, method: str, allowlist: list[str], responses: dict[str, str]) -> str:\n    # Check if method is GET (case insensitive)\n    if method.upper() != 'GET':\n        raise ValueError(\"Only GET method is allowed\")\n    \n    # Check if URL starts with https://\n    if not url.startswith('https://'):\n        raise ValueError(\"Only HTTPS URLs are allowed\")\n    \n    # Extract host from URL\n    # Remove https:// prefix\n    url_without_scheme = url[8:]  # Remove 'https://'\n    \n    # Find the host part (everything before first '/' or end of string)\n    slash_index = url_without_scheme.find('/')\n    if slash_index == -1:\n        host = url_without_scheme\n    else:\n        host = url_without_scheme[:slash_index]\n    \n    # Remove port if present\n    colon_index = host.find(':')\n    if colon_index != -1:\n        host = host[:colon_index]\n    \n    # Check if host is in allowlist\n    if host not in allowlist:\n        raise ValueError(\"Host not in allowlist\")\n    \n    # Check if host is localhost or private IP\n    if _is_forbidden_host(host):\n        raise ValueError(\"Localhost and private IPs are not allowed\")\n    \n    # Look up response\n    response_key = f\"{method.upper()} {url}\"\n    if response_key not in responses:\n        raise ValueError(\"Response not found\")\n    \n    return responses[response_key]\n\ndef _is_forbidden_host(host: str) -> bool:\n    # Check for localhost\n    if host.lower() in ['localhost', '127.0.0.1', '::1']:\n        return True\n    \n    # Check if it's an IP address\n    if _is_ip_address(host):\n        return _is_private_ip(host)\n    \n    return False\n\ndef _is_ip_address(host: str) -> bool:\n    # Simple check for IPv4\n    parts = host.split('.')\n    if len(parts) == 4:\n        try:\n            for part in parts:\n                num = int(part)\n                if num < 0 or num > 255:\n                    return False\n            return True\n        except ValueError:\n            return False\n    \n    # Simple check for IPv6 (contains colons)\n    if ':' in host:\n        return True\n    \n    return False\n\ndef _is_private_ip(ip: str) -> bool:\n    # Check for IPv4 private ranges\n    if '.' in ip:\n        parts = ip.split('.')\n        if len(parts) == 4:\n            try:\n                first = int(parts[0])\n                second = int(parts[1])\n                \n                # 10.0.0.0/8\n                if first == 10:\n                    return True\n                \n                # 172.16.0.0/12\n                if first == 172 and 16 <= second <= 31:\n                    return True\n                \n                # 192.168.0.0/16\n                if first == 192 and second == 168:\n                    return True\n                \n                # 127.0.0.0/8 (localhost)\n                if first == 127:\n                    return True\n                    \n            except ValueError:\n                pass\n    \n    # For IPv6, consider all as private for safety (since we can't import ipaddress)\n    if ':' in ip:\n        return True\n    \n    return False",
+        "metrics": {
+          "passed_cases": 8,
+          "total_cases": 8
+        },
+        "summary": "API caller enforces scheme, host, and method restrictions on bounded adversarial cases"
+      },
+      "constraints": [
+        "Reject localhost, private IPs, bare IP hosts, and non-HTTPS schemes.",
+        "Only the GET method is allowed.",
+        "Look up the final response in the provided responses map using the key '<METHOD> <URL>'."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "safe_api_call",
+      "id": "safe_api_caller",
+      "iterations": 3,
+      "name": "Safe API Caller",
+      "primary_invariant": "Only HTTPS GET requests to explicitly allowlisted public hosts are permitted.",
+      "signature": "safe_api_call(url: str, method: str, allowlist: list[str], responses: dict[str, str]) -> str",
+      "status": "verified",
+      "task": "Validate an outbound API request against a strict allowlist and return a mocked response body.",
+      "thesis": "The network boundary belongs in the tool contract, not in the model's intentions.",
+      "verification_lane": "URL policy oracle covering scheme, host, IP, and method restrictions."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def append_only_log(existing: str, new_entry: str, max_bytes: int = 4096) -> str:\n    # Check for NUL bytes in new_entry\n    if '\\x00' in new_entry:\n        raise ValueError(\"New entry contains NUL bytes\")\n    \n    # Start with existing log\n    result = existing\n    \n    # Add newline if existing is non-empty and doesn't end with newline\n    if existing and not existing.endswith('\\n'):\n        result += '\\n'\n    \n    # Add the new entry\n    result += new_entry\n    \n    # Check size constraint\n    if len(result.encode('utf-8')) > max_bytes:\n        raise ValueError(\"Output would exceed maximum byte limit\")\n    \n    return result",
+        "metrics": {
+          "passed_cases": 5,
+          "total_cases": 5
+        },
+        "summary": "logger preserves prefix monotonicity and bounded growth on bounded adversarial cases"
+      },
+      "constraints": [
+        "Preserve the full previous log exactly as a prefix.",
+        "If the existing log is non-empty and does not end with a newline, insert one before the new entry.",
+        "Reject outputs whose byte length would exceed max_bytes."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Oversized writes and NUL bytes should be rejected.",
+          "payload": {
+            "existing": "",
+            "max_bytes": 64,
+            "new_entry": "abc\u0000def"
+          },
+          "title": "invalid_append_accepted"
+        },
+        "summary": "invalid append request was accepted"
+      },
+      "function_name": "append_only_log",
+      "id": "append_only_logger",
+      "iterations": 2,
+      "name": "Append-Only Logger",
+      "primary_invariant": "The previous log must remain a prefix of the new log; size must never exceed the configured bound.",
+      "signature": "append_only_log(existing: str, new_entry: str, max_bytes: int = 4096) -> str",
+      "status": "verified",
+      "task": "Append a new log entry without mutating existing bytes and enforce a hard output-size cap.",
+      "thesis": "Scratchpad memory is safest when writes become monotonic state transitions.",
+      "verification_lane": "Prefix-preservation checks and bounded byte-budget enforcement."
+    },
+    {
+      "accepted_attempt": {
+        "code": null,
+        "metrics": {},
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "constraints": [
+        "Replace matches with stable placeholders rather than deleting all surrounding context.",
+        "Handle multiple PII categories in one string.",
+        "Do not introduce new digits that recreate a banned pattern."
+      ],
+      "evidence_level": "ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "mask_pii",
+      "id": "pii_masker",
+      "iterations": 4,
+      "name": "PII Masker",
+      "primary_invariant": "Masked output must not contain emails, US phone numbers, SSNs, or 16-digit card numbers recognized by the repository regex suite.",
+      "signature": "mask_pii(text: str) -> str",
+      "status": "failed",
+      "task": "Redact common PII patterns before text is sent to an LLM.",
+      "thesis": "Sanitization should fail closed on known high-risk PII classes before context leaves the host.",
+      "verification_lane": "Regex-backed fixture suite with stable placeholder expectations."
+    },
+    {
+      "accepted_attempt": {
+        "code": "def bounded_evaluate(expression: str, variables: dict[str, int], max_nodes: int = 32) -> int:\n    def parse_expression(expr):\n        # Simple recursive descent parser\n        tokens = tokenize(expr)\n        pos = [0]  # Use list to allow modification in nested functions\n        \n        def peek():\n            return tokens[pos[0]] if pos[0] < len(tokens) else None\n        \n        def consume():\n            token = tokens[pos[0]] if pos[0] < len(tokens) else None\n            pos[0] += 1\n            return token\n        \n        def parse_expr():\n            left = parse_term()\n            while peek() in ['+', '-']:\n                op = consume()\n                right = parse_term()\n                left = ('binop', op, left, right)\n            return left\n        \n        def parse_term():\n            left = parse_factor()\n            while peek() in ['*', '//']:\n                op = consume()\n                right = parse_factor()\n                left = ('binop', op, left, right)\n            return left\n        \n        def parse_factor():\n            token = peek()\n            if token == '-':\n                consume()\n                operand = parse_factor()\n                return ('unary', '-', operand)\n            elif token == '(':\n                consume()\n                expr = parse_expr()\n                if consume() != ')':\n                    raise ValueError(\"Missing closing parenthesis\")\n                return expr\n            elif token and (token.isdigit() or (token.startswith('-') and token[1:].isdigit())):\n                return ('num', int(consume()))\n            elif token and token.isidentifier():\n                return ('var', consume())\n            else:\n                raise ValueError(f\"Unexpected token: {token}\")\n        \n        return parse_expr()\n    \n    def tokenize(expr):\n        tokens = []\n        i = 0\n        while i < len(expr):\n            if expr[i].isspace():\n                i += 1\n            elif expr[i] in '+-*()':\n                tokens.append(expr[i])\n                i += 1\n            elif expr[i:i+2] == '//':\n                tokens.append('//')\n                i += 2\n            elif expr[i].isdigit():\n                j = i\n                while j < len(expr) and expr[j].isdigit():\n                    j += 1\n                tokens.append(expr[i:j])\n                i = j\n            elif expr[i].isalpha() or expr[i] == '_':\n                j = i\n                while j < len(expr) and (expr[j].isalnum() or expr[j] == '_'):\n                    j += 1\n                tokens.append(expr[i:j])\n                i = j\n            else:\n                raise ValueError(f\"Invalid character: {expr[i]}\")\n        return tokens\n    \n    def count_nodes(ast):\n        if ast[0] == 'num':\n            return 1\n        elif ast[0] == 'var':\n            return 1\n        elif ast[0] == 'unary':\n            return 1 + count_nodes(ast[2])\n        elif ast[0] == 'binop':\n            return 1 + count_nodes(ast[2]) + count_nodes(ast[3])\n        else:\n            raise ValueError(f\"Unknown AST node type: {ast[0]}\")\n    \n    def evaluate_ast(ast):\n        if ast[0] == 'num':\n            return ast[1]\n        elif ast[0] == 'var':\n            var_name = ast[1]\n            if var_name not in variables:\n                raise ValueError(f\"Unknown variable: {var_name}\")\n            return variables[var_name]\n        elif ast[0] == 'unary':\n            op, operand = ast[1], ast[2]\n            if op == '-':\n                return -evaluate_ast(operand)\n            else:\n                raise ValueError(f\"Unknown unary operator: {op}\")\n        elif ast[0] == 'binop':\n            op, left, right = ast[1], ast[2], ast[3]\n            left_val = evaluate_ast(left)\n            right_val = evaluate_ast(right)\n            if op == '+':\n                return left_val + right_val\n            elif op == '-':\n                return left_val - right_val\n            elif op == '*':\n                return left_val * right_val\n            elif op == '//':\n                if right_val == 0:\n                    raise ValueError(\"Division by zero\")\n                return left_val // right_val\n            else:\n                raise ValueError(f\"Unknown binary operator: {op}\")\n        else:\n            raise ValueError(f\"Unknown AST node type: {ast[0]}\")\n    \n    # Parse the expression\n    ast = parse_expression(expression)\n    \n    # Check node count\n    if count_nodes(ast) > max_nodes:\n        raise ValueError(f\"Expression has too many nodes (>{max_nodes})\")\n    \n    # Evaluate and return result\n    return evaluate_ast(ast)",
+        "metrics": {
+          "passed_cases": 12,
+          "total_cases": 12
+        },
+        "summary": "evaluator matches the bounded arithmetic oracle and rejects unsupported syntax"
+      },
+      "constraints": [
+        "Support integers, variables, parentheses, unary minus, +, -, *, and //.",
+        "Reject function calls, attributes, exponentiation, unknown variables, and expressions with more than max_nodes AST nodes.",
+        "Return the same result as the reference interpreter on bounded inputs."
+      ],
+      "evidence_level": "bounded-execution + ast-guard",
+      "failing_attempt": {
+        "counterexample": {
+          "description": "Candidates must stay within the provided runtime and cannot import modules.",
+          "payload": {
+            "node_type": "Import"
+          },
+          "title": "forbidden_import"
+        },
+        "summary": "imports are not allowed in candidate tools"
+      },
+      "function_name": "bounded_evaluate",
+      "id": "compute_bounded_evaluator",
+      "iterations": 3,
+      "name": "Compute-Bounded Evaluator",
+      "primary_invariant": "Only a bounded whitelist of arithmetic AST nodes is allowed, and evaluation must reject unsupported or oversized expressions.",
+      "signature": "bounded_evaluate(expression: str, variables: dict[str, int], max_nodes: int = 32) -> int",
+      "status": "verified",
+      "task": "Evaluate a tiny arithmetic expression language with explicit resource bounds.",
+      "thesis": "If the evaluator language is tiny, the verifier can exhaustively compare semantics on bounded cases.",
+      "verification_lane": "AST whitelist plus bounded arithmetic equivalence against a reference interpreter."
+    }
+  ],
+  "provider": "openai-compatible",
+  "tagline": "CEGIS for synthesizing safe agent tools under explicit environment invariants.",
+  "timeline": [
+    "Specify a micro-scoped tool and its primary invariant.",
+    "Generate a candidate implementation through the synthesis interface.",
+    "Run AST guards and bounded executable verifiers.",
+    "Feed the counterexample back into the next generation attempt.",
+    "Accept only the first candidate that satisfies the bounded verifier suite."
+  ],
+  "title": "VeriTool"
+}
