@@ -1,5 +1,7 @@
 # VeriTool
 
+[Technical Report](sauravpanigrahi.com/artifact/veritool)
+
 VeriTool is a Vericoding artifact for synthesizing narrowly scoped agent tools under explicit safety invariants. Instead of trying to prove that an autonomous agent will behave safely in the large, VeriTool constrains the environment the agent is allowed to act through: path readers, SQL accessors, API callers, loggers, maskers, and evaluators.
 
 The repository implements a shared CEGIS-style loop:
